@@ -13,14 +13,14 @@
 #define HASHCHECK_NAME_STR "HashCheck Shell Extension"
 
 // Full version: MUST be in the form of major,minor,revision,build
-#define HASHCHECK_VERSION_FULL 2,5,0,1
+#define HASHCHECK_VERSION_FULL 2,6,0,0
 
 // String version: May be any suitable string
-#define HASHCHECK_VERSION_STR "2.5.0.1"
+#define HASHCHECK_VERSION_STR "2.6.0.0"
 
 #ifdef _USRDLL
 // PE version: MUST be in the form of major.minor
-#pragma comment(linker, "/version:2.5")
+#pragma comment(linker, "/version:2.6")
 #endif
 
 // Tail portion of the copyright string for the version resource

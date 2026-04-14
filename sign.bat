@@ -5,6 +5,6 @@ signtool sign /v /sha1 86E1D426731E79117452F090188A828426B29B5F /ac GlobalSign_S
 
 makensis.exe installer\HashCheck.nsi
 
-signtool sign /v /sha1 86E1D426731E79117452F090188A828426B29B5F /ac GlobalSign_SHA256_EV_CodeSigning_CA.cer /fd sha256 /tr http://timestamp.digicert.com /td SHA256  "installer\HashCheckSetup-v2.5.0.1.exe"
+signtool sign /v /sha1 86E1D426731E79117452F090188A828426B29B5F /ac GlobalSign_SHA256_EV_CodeSigning_CA.cer /fd sha256 /tr http://timestamp.digicert.com /td SHA256  "installer\HashCheckSetup-v2.6.0.0.exe"
 
 pause

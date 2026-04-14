@@ -6,7 +6,7 @@
 Unicode true
 
 Name "HashCheck"
-OutFile "HashCheckSetup-v2.5.0.1.exe"
+OutFile "HashCheckSetup-v2.6.0.0.exe"
 
 RequestExecutionLevel admin
 ManifestSupportedOS all
@@ -53,13 +53,13 @@ FunctionEnd
 !insertmacro MUI_LANGUAGE "Ukrainian"
 !insertmacro MUI_LANGUAGE "Catalan"
 
-VIProductVersion "2.5.0.1"
+VIProductVersion "2.6.0.0"
 VIAddVersionKey /LANG=${LANG_ENGLISH} "ProductName" "HashCheck Shell Extension"
-VIAddVersionKey /LANG=${LANG_ENGLISH} "ProductVersion" "2.5.0.1"
+VIAddVersionKey /LANG=${LANG_ENGLISH} "ProductVersion" "2.6.0.0"
 VIAddVersionKey /LANG=${LANG_ENGLISH} "Comments" "Installer distributed from https://github.com/idrassi/HashCheck/releases"
 VIAddVersionKey /LANG=${LANG_ENGLISH} "LegalCopyright" "Copyright © 2008-2021 Kai Liu, Christopher Gurnee, Tim Schlueter, Mounir IDRASSI, et al. All rights reserved."
 VIAddVersionKey /LANG=${LANG_ENGLISH} "FileDescription" "Installer (x86/x64) from https://github.com/idrassi/HashCheck/releases"
-VIAddVersionKey /LANG=${LANG_ENGLISH} "FileVersion" "2.5.0.1"
+VIAddVersionKey /LANG=${LANG_ENGLISH} "FileVersion" "2.6.0.0"
 
 ; With solid compression, files that are required before the
 ; actual installation should be stored first in the data block,

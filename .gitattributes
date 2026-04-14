@@ -1,3 +1,5 @@
 # Keep vendored oneTBB text files in upstream form without making
 # git diff --check report formatting that comes from the upstream package.
 libs/oneTBB/** whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab,-indent-with-non-tab,-tab-in-indent,cr-at-eol
+version.h whitespace=cr-at-eol
+sign.bat whitespace=cr-at-eol
