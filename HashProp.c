@@ -12,6 +12,7 @@
 #include "globals.h"
 #include "HashCheckCommon.h"
 #include "HashCalc.h"
+#include "IsSSD.h"
 #include "libs/WinHash.h"
 #include <Strsafe.h>
 #include <assert.h>
@@ -115,10 +116,10 @@ VOID __fastcall HashPropWorkerMain( PHASHPROPCONTEXT phpctx )
     // (this is loaded earlier in HashPropDlgInit())
     DWORD checksumFlags = (UINT8)phpctx->opt.dwChecksums;
 
+	phpctx->dwReadBufferSize = 0;
+
     // Read buffer
-    PBYTE pbBuffer = (PBYTE)VirtualAlloc(NULL, READ_BUFFER_SIZE, MEM_COMMIT, PAGE_READWRITE);
-    if (pbBuffer == NULL)
-        return;
+    PBYTE pbBuffer = NULL;
 
 #ifdef _TIMED
     DWORD dwStarted;
@@ -132,6 +133,21 @@ VOID __fastcall HashPropWorkerMain( PHASHPROPCONTEXT phpctx )
         // only calculate the checksums we don't already have (usually all those requested)
         whctx.dwFlags = checksumFlags & ~pItem->results.dwFlags;
 
+		if (phpctx->dwReadBufferSize == 0)
+		{
+			// Set the read buffer size based on the disk type
+			if (IsSSD(pItem->szPath))
+				phpctx->dwReadBufferSize = READ_BUFFER_SIZE_SSD;
+			else
+				phpctx->dwReadBufferSize = READ_BUFFER_SIZE_HDD;
+		}
+
+		if (pbBuffer == NULL)
+		{
+			pbBuffer = (PBYTE)malloc(phpctx->dwReadBufferSize);
+			if (pbBuffer == NULL)
+				return;
+		}
 		// Get the hash
 		WorkerThreadHashFile(
 			(PCOMMONCONTEXT)phpctx,
@@ -157,7 +173,7 @@ VOID __fastcall HashPropWorkerMain( PHASHPROPCONTEXT phpctx )
 #ifdef _TIMED
     phpctx->dwElapsed = GetTickCount() - dwStarted;
 #endif
-    VirtualFree(pbBuffer, 0, MEM_RELEASE);
+    free(pbBuffer);
 }
 
 

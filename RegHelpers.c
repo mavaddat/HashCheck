@@ -7,16 +7,15 @@
  **/
 
 #include "RegHelpers.h"
+#include "globals.h"
 #include "libs/Wow64.h"
 #include "libs/SimpleString.h"
 #include <Strsafe.h>
 
-#define countof(x) (sizeof(x)/sizeof(x[0]))
-
 HKEY WINAPI RegOpen( HKEY hKey, LPCTSTR lpSubKey, LPCTSTR lpSubst, BOOL bCreate )
 {
 	HKEY hKeyRet = NULL;
-	TCHAR szJoinedKey[0x7F];
+	TCHAR szJoinedKey[MAX_PATH + 0x80];
 	if (lpSubst) StringCchPrintf(szJoinedKey, countof(szJoinedKey), lpSubKey, lpSubst);
 
     LONG lResult;
@@ -37,7 +36,7 @@ HKEY WINAPI RegOpen( HKEY hKey, LPCTSTR lpSubKey, LPCTSTR lpSubst, BOOL bCreate 
 BOOL WINAPI RegDelete( HKEY hKey, LPCTSTR lpSubKey, LPCTSTR lpSubst )
 {
 	LONG lResult;
-	TCHAR szJoinedKey[0x7F];
+	TCHAR szJoinedKey[MAX_PATH + 0x80];
 	if (lpSubst) StringCchPrintf(szJoinedKey, countof(szJoinedKey), lpSubKey, lpSubst);
 
 	lResult = SHDeleteKey(hKey, (lpSubst) ? szJoinedKey : lpSubKey);

@@ -10,6 +10,11 @@
 #include "HashCheckUI.h"
 #include "HashCheckOptions.h"
 
+// Undocumented Win5-era shell flag used by the Start Menu workaround below.
+#ifndef CMF_VERBSONMAN
+#define CMF_VERBSONMAN 0x00020000
+#endif
+
 CHashCheck::CHashCheck( )
 {
     InterlockedIncrement(&g_cRefThisDll);
@@ -99,7 +104,7 @@ STDMETHODIMP CHashCheck::QueryContextMenu( HMENU hmenu, UINT indexMenu, UINT idC
 
 	// Ugly hack: work around a bug in Windows 5.x that causes a spurious
 	// separator to be added when invoking the context menu from the Start Menu
-	if (g_uWinVer < 0x0600 && !(uFlags & (0x20000 | CMF_EXPLORE)) && GetModuleHandleA("explorer.exe"))
+	if (g_uWinVer < 0x0600 && !(uFlags & (CMF_VERBSONMAN | CMF_EXPLORE)) && GetModuleHandleA("explorer.exe"))
 		return(MAKE_HRESULT(SEVERITY_SUCCESS, FACILITY_NULL, 0));
 
 	// Load the menu display settings

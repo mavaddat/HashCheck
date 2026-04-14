@@ -115,7 +115,8 @@ BOOL WINAPI HashCalcPrepare( PHASHCALCCONTEXT phcctx )
 		{
 			// Finally, we can do the actual work that's needed!
 
-			if (GetFileAttributes(pszCurrent) & FILE_ATTRIBUTE_DIRECTORY)
+			DWORD dwAttrs = GetFileAttributes(pszCurrent);
+			if (dwAttrs != INVALID_FILE_ATTRIBUTES && (dwAttrs & FILE_ATTRIBUTE_DIRECTORY))
 			{
 				if (cchCurrent < MAX_PATH_BUFFER - 2)
 				{

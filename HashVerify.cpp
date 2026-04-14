@@ -94,6 +94,7 @@ typedef struct {
 	HANDLE             hThread;      // handle of the worker thread
 	HANDLE             hUnpauseEvent;// handle of the event which signals when unpaused
 	PFNWORKERMAIN      pfnWorkerMain;// worker function executed by the (non-GUI) thread
+	DWORD              dwReadBufferSize; // size of the read buffer, in bytes
 	// Members specific to HashVerify
 	HWND               hWndList;     // handle of the list
 	HSIMPLELIST        hList;        // where we store all the data
@@ -193,6 +194,7 @@ DWORD WINAPI HashVerifyThread( PTSTR pszPath )
 	HCNormalizeString(pszPath);
 	StrTrim(pszPath, TEXT(" "));
 	hvctx.pszPath = pszPath;
+	hvctx.dwReadBufferSize = READ_BUFFER_SIZE;
 
 	// Load the raw data
 	pbRawData = HashVerifyLoadData(&hvctx);
@@ -250,6 +252,8 @@ PBYTE WINAPI HashVerifyLoadData( PHASHVERIFYCONTEXT phvctx )
 		DWORD cbBytesRead;
 
 		if ( (GetFileSizeEx(hFile, &cbRawData)) &&
+		     (cbRawData.HighPart == 0) &&
+		     (cbRawData.LowPart <= MAXDWORD - sizeof(DWORD)) &&
 		     (pbRawData = (PBYTE)malloc(cbRawData.LowPart + sizeof(DWORD))) &&
 		     (ReadFile(hFile, pbRawData, cbRawData.LowPart, &cbBytesRead, NULL)) &&
 		     (cbRawData.LowPart == cbBytesRead) )
@@ -525,7 +529,7 @@ VOID __fastcall HashVerifyWorkerMain( PHASHVERIFYCONTEXT phvctx )
     PBYTE pbTheBuffer;  // filename/read buffer, used iff not multithreaded
     if (! bMultithreaded)
     {
-        pbTheBuffer = (PBYTE)VirtualAlloc(NULL, READ_BUFFER_SIZE, MEM_COMMIT, PAGE_READWRITE);
+        pbTheBuffer = (PBYTE)malloc(READ_BUFFER_SIZE);
         if (pbTheBuffer == NULL)
             return;
     }
@@ -553,7 +557,7 @@ VOID __fastcall HashVerifyWorkerMain( PHASHVERIFYCONTEXT phvctx )
             pbBuffer = (PBYTE)TlsGetValue(dwBufferTlsIndex);
             if (pbBuffer == NULL)
             {
-                pbBuffer = (PBYTE)VirtualAlloc(NULL, READ_BUFFER_SIZE, MEM_COMMIT, PAGE_READWRITE);
+                pbBuffer = (PBYTE)malloc(READ_BUFFER_SIZE);
                 if (pbBuffer == NULL)
                     throw CanceledException();
                 // Cache the read buffer for the current thread
@@ -632,7 +636,7 @@ VOID __fastcall HashVerifyWorkerMain( PHASHVERIFYCONTEXT phvctx )
             if (dwMatched)
             {
                 pItem->uStatusID = HV_STATUS_MATCH;
-                
+
                 StringCbCopy(pItem->szActual, sizeof(pItem->szActual), pszActual);
                 if (cHashes > 1 && phvctx->whctxFlags != dwMatched)
                     phvctx->whctxFlags = dwMatched;
@@ -669,12 +673,12 @@ VOID __fastcall HashVerifyWorkerMain( PHASHVERIFYCONTEXT phvctx )
     if (bMultithreaded)
     {
         for (void* pBuffer : vecBuffers)
-            VirtualFree(pBuffer, 0, MEM_RELEASE);
+            free(pBuffer);
         DeleteCriticalSection(&updateCritSec);
     }
     else
 #endif
-        VirtualFree(pbTheBuffer, 0, MEM_RELEASE);
+        free(pbTheBuffer);
 
 	// Play a sound to signal the normal, successful termination of operations,
 	// but exempt operations that were nearly instantaneous

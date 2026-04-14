@@ -142,7 +142,7 @@ VOID WINAPI SetProgressBarPause( PCOMMONCONTEXT pcmnctx, WPARAM iState )
 		// the color will not change (but it will stop animating), so it may
 		// be necessary to send another PBM_SETSTATE to get it right
         if (iState == PBST_PAUSED)
-            SetTimer(pcmnctx->hWnd, TIMER_ID_PAUSE, 750, NULL);
+            SetTimer(pcmnctx->hWnd, TIMER_ID_PAUSE, PAUSE_TIMER_INTERVAL_MS, NULL);
 	}
 }
 
@@ -216,11 +216,11 @@ VOID WINAPI WorkerThreadCleanup( PCOMMONCONTEXT pcmnctx )
 		if (pcmnctx->status != INACTIVE)
 		{
 			// Forced abort, where the thread has been told to stop but has not yet
-			// stopped. With the MS Concurrency runtime, there's no simple way to
-			// terminate errant threads; it's better to abort the process than to
-			// allow them to continue (maybe maxing out the CPU) in the background.
-			if (WaitForSingleObject(pcmnctx->hThread, 10000) == WAIT_TIMEOUT)
-				abort();
+			// stopped. The common context and UI resources are owned by the caller,
+			// so it is not safe to detach a still-running worker here. Do not crash
+			// Explorer; after the grace period, keep waiting for a real stop.
+			if (WaitForSingleObject(pcmnctx->hThread, WORKER_THREAD_CLEANUP_TIMEOUT_MS) == WAIT_TIMEOUT)
+				WaitForSingleObject(pcmnctx->hThread, INFINITE);
 		}
 
 		CloseHandle(pcmnctx->hThread);
@@ -342,10 +342,11 @@ VOID WINAPI WorkerThreadHashFile( PCOMMONCONTEXT pcmnctx, PCTSTR pszPath,
                                 )
 {
 	HANDLE hFile;
+	DWORD dwReadBufferSize = pcmnctx->dwReadBufferSize ? pcmnctx->dwReadBufferSize : READ_BUFFER_SIZE;
 
 	// If the worker thread is working so fast that the UI cannot catch up,
 	// pause for a bit to let things settle down
-	while (pcmnctx->cSentMsgs > pcmnctx->cHandledMsgs + 50)
+	while (pcmnctx->cSentMsgs > pcmnctx->cHandledMsgs + MSG_THROTTLE_THRESHOLD)
 	{
 		Sleep(50);
         if (pcmnctx->status == PAUSED)
@@ -377,11 +378,13 @@ VOID WINAPI WorkerThreadHashFile( PCOMMONCONTEXT pcmnctx, PCTSTR pszPath,
 
 		if (GetFileSizeEx(hFile, (PLARGE_INTEGER)&cbFileSize))
 		{
+			BOOL bReadError = FALSE;
+
 			// The progress bar is updates only once every 4 buffer reads; if
 			// the file is small enough that it requires only one such cycle,
 			// then do not bother with updating the progress bar; this improves
 			// performance when working with large numbers of small files
-			BOOL bUpdateProgress = cbFileSize >= READ_BUFFER_SIZE * 4,
+			BOOL bUpdateProgress = cbFileSize >= dwReadBufferSize * 4,
 			     bCurrentlyUpdating = FALSE;
 
 			// If the caller provides a way to return the file size, then set
@@ -390,7 +393,7 @@ VOID WINAPI WorkerThreadHashFile( PCOMMONCONTEXT pcmnctx, PCTSTR pszPath,
 			{
 				pFileSize->ui64 = cbFileSize;
 				StrFormatKBSize(cbFileSize, pFileSize->sz, countof(pFileSize->sz));
-				if (cbFileSize > READ_BUFFER_SIZE)
+				if (cbFileSize > dwReadBufferSize)
 				    PostMessage(pcmnctx->hWnd, HM_WORKERTHREAD_SETSIZE, (WPARAM)pcmnctx, lParam != -1 ? lParam : (LPARAM)pFileSize);
 			}
 #ifdef _TIMED
@@ -414,17 +417,24 @@ VOID WINAPI WorkerThreadHashFile( PCOMMONCONTEXT pcmnctx, PCTSTR pszPath,
 						return;
 					}
 
-					ReadFile(hFile, pbuffer, READ_BUFFER_SIZE, &cbBufferRead, NULL);
-					WHUpdateEx(pwhctx, pbuffer, cbBufferRead);
-					cbFileRead += cbBufferRead;
+					if (!ReadFile(hFile, pbuffer, dwReadBufferSize, &cbBufferRead, NULL))
+					{
+						cbBufferRead = 0;
+						bReadError = TRUE;
+					}
+					else
+					{
+						WHUpdateEx(pwhctx, pbuffer, cbBufferRead);
+						cbFileRead += cbBufferRead;
+					}
 
-				} while (cbBufferRead == READ_BUFFER_SIZE && (++cInner & 0x03));
+				} while (cbBufferRead == dwReadBufferSize && (++cInner & 0x03));
 
 				if (bUpdateProgress)
 					UpdateProgressBar(pcmnctx->hWndPBFile, pUpdateCritSec, &bCurrentlyUpdating,
 					                  pcbCurrentMaxSize, cbFileSize, cbFileRead, &lastProgress);
 
-			} while (cbBufferRead == READ_BUFFER_SIZE);
+			} while (cbBufferRead == dwReadBufferSize);
 
 			WHFinishEx(pwhctx, pwhres);
 #ifdef _TIMED
@@ -432,7 +442,7 @@ VOID WINAPI WorkerThreadHashFile( PCOMMONCONTEXT pcmnctx, PCTSTR pszPath,
                 *pdwElapsed = GetTickCount() - dwStarted;
 #endif
             // If we encountered a file read error
-            if (cbFileRead != cbFileSize)
+            if (bReadError || cbFileRead != cbFileSize)
                 // Clear the valid-results bits for the hashes we just calculated
                 // (they are set by WHFinishEx, but they're apparently *not* valid)
                 pwhres->dwFlags &= ~pwhctx->dwFlags;
@@ -469,10 +479,20 @@ __forceinline HANDLE WINAPI GetActCtx( HMODULE hModule, PCTSTR pszResourceName )
 
 ULONG_PTR WINAPI ActivateManifest( BOOL bActivate )
 {
-	if (!g_bActCtxCreated)
+	// XP-compatible one-time initialization. InitOnceExecuteOnce is Vista+ and
+	// would be a static import, so use Interlocked* instead.
+	static volatile LONG s_lActCtxInitState = 0; // 0 = new, 1 = creating, 2 = done
+
+	if (InterlockedCompareExchange(&s_lActCtxInitState, 1, 0) == 0)
 	{
-		g_bActCtxCreated = TRUE;
 		g_hActCtx = GetActCtx(g_hModThisDll, MAKEINTRESOURCE(IDR_RT_MANIFEST));
+		g_bActCtxCreated = TRUE;
+		InterlockedExchange(&s_lActCtxInitState, 2);
+	}
+	else
+	{
+		while (s_lActCtxInitState != 2)
+			Sleep(0);
 	}
 
 	if (g_hActCtx != INVALID_HANDLE_VALUE)

@@ -16,6 +16,7 @@
 #include "libs/WinHash.h"
 #include "libs/Wow64.h"
 #include <Strsafe.h>
+#include <new>
 
  // Table of formerly supported Hash file extensions to be removed during install
 LPCTSTR szFormerHashExtsTab[] = {
@@ -52,7 +53,24 @@ extern "C" BOOL WINAPI DllMain( HINSTANCE hInstance, DWORD dwReason, LPVOID lpRe
 			g_cRefThisDll = 0;
 			g_bActCtxCreated = FALSE;
 			g_hActCtx = INVALID_HANDLE_VALUE;
+
+			// Start with the XP-compatible fallback, then replace it with the
+			// more accurate ntdll result when that Vista+ API is available.
 			g_uWinVer = SwapV16(LOWORD(GetVersion()));
+			{
+				typedef NTSTATUS (WINAPI *PFNRTLGETVERSION)(PRTL_OSVERSIONINFOW);
+				HMODULE hNtDll = GetModuleHandleA("ntdll.dll");
+				PFNRTLGETVERSION pfnRtlGetVersion = hNtDll ?
+					(PFNRTLGETVERSION)GetProcAddress(hNtDll, "RtlGetVersion") :
+					NULL;
+
+				if (pfnRtlGetVersion != NULL)
+				{
+					RTL_OSVERSIONINFOW osvi = { sizeof(osvi) };
+					if (pfnRtlGetVersion(&osvi) == 0)
+						g_uWinVer = (UINT16)((osvi.dwMajorVersion << 8) | (osvi.dwMinorVersion & 0xFF));
+				}
+			}
 			#ifndef _WIN64
 			if (g_uWinVer < 0x0501) return(FALSE);
 			#endif
@@ -87,7 +105,7 @@ STDAPI DllGetClassObject( REFCLSID rclsid, REFIID riid, LPVOID *ppv )
 
 	if (IsEqualIID(rclsid, CLSID_HashCheck))
 	{
-		LPCHASHCHECKCLASSFACTORY lpHashCheckClassFactory = new CHashCheckClassFactory;
+		LPCHASHCHECKCLASSFACTORY lpHashCheckClassFactory = new(std::nothrow) CHashCheckClassFactory;
 		if (lpHashCheckClassFactory == NULL) return(E_OUTOFMEMORY);
 
 		HRESULT hr = lpHashCheckClassFactory->QueryInterface(riid, ppv);
@@ -163,7 +181,7 @@ STDAPI DllRegisterServerEx( LPCTSTR lpszModuleName )
 	if (hKey = RegOpen(HKEY_CLASSES_ROOT, TEXT("%s\\shell\\open\\command"), PROGID_STR_HashCheck, TRUE))
 	{
 		// This is a legacy fallback used only when DropTarget is unsupported
-		StringCchPrintf(szBuffer, countof(szBuffer), TEXT("rundll32.exe \"%s\",HashVerify_RunDLL %%1"), lpszModuleName, IDS_FILETYPE_DESC);
+		StringCchPrintf(szBuffer, countof(szBuffer), TEXT("rundll32.exe \"%s\",HashVerify_RunDLL %%1"), lpszModuleName);
 		RegSetSZ(hKey, NULL, szBuffer);
 		RegCloseKey(hKey);
 	} else return(SELFREG_E_CLASS);
@@ -429,7 +447,7 @@ HRESULT Uninstall( )
 
                     TCHAR lpszCommandLine[MAX_PATH + 0x20];
                     LPTSTR lpszCommandLineAppend;
-                    
+
                     static const TCHAR szCommandOpts[] = TEXT("regsvr32.exe /u /i /n /s ");
                     lpszCommandLineAppend = SSStaticCpy(lpszCommandLine, szCommandOpts) - 1;
 

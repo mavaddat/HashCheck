@@ -8,6 +8,7 @@
 
 #include "CHashCheckClassFactory.hpp"
 #include "CHashCheck.hpp"
+#include <new>
 
 STDMETHODIMP CHashCheckClassFactory::QueryInterface( REFIID riid, LPVOID *ppv )
 {
@@ -35,7 +36,7 @@ STDMETHODIMP CHashCheckClassFactory::CreateInstance( LPUNKNOWN pUnkOuter, REFIID
 
 	if (pUnkOuter) return(CLASS_E_NOAGGREGATION);
 
-	LPCHASHCHECK lpHashCheck = new CHashCheck;
+	LPCHASHCHECK lpHashCheck = new(std::nothrow) CHashCheck;
 	if (lpHashCheck == NULL) return(E_OUTOFMEMORY);
 
 	HRESULT hr = lpHashCheck->QueryInterface(riid, ppv);

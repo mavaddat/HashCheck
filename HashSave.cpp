@@ -67,6 +67,7 @@ VOID WINAPI HashSaveStart( HWND hWndOwner, HSIMPLELIST hListRaw )
 
 		phsctx->hWnd = hWndOwner;
 		phsctx->hListRaw = hListRaw;
+		phsctx->dwReadBufferSize = READ_BUFFER_SIZE;
 
 		InterlockedIncrement(&g_cRefThisDll);
 		SLAddRef(hListRaw);
@@ -177,7 +178,7 @@ VOID __fastcall HashSaveWorkerMain( PHASHSAVECONTEXT phsctx )
     PBYTE pbTheBuffer;  // file read buffer, used iff not multithreaded
     if (! bMultithreaded)
     {
-        pbTheBuffer = (PBYTE)VirtualAlloc(NULL, READ_BUFFER_SIZE, MEM_COMMIT, PAGE_READWRITE);
+        pbTheBuffer = (PBYTE)malloc(READ_BUFFER_SIZE);
         if (pbTheBuffer == NULL)
             return;
     }
@@ -211,7 +212,7 @@ VOID __fastcall HashSaveWorkerMain( PHASHSAVECONTEXT phsctx )
             pbBuffer = (PBYTE)TlsGetValue(dwBufferTlsIndex);
             if (pbBuffer == NULL)
             {
-                pbBuffer = (PBYTE)VirtualAlloc(NULL, READ_BUFFER_SIZE, MEM_COMMIT, PAGE_READWRITE);
+                pbBuffer = (PBYTE)malloc(READ_BUFFER_SIZE);
                 if (pbBuffer == NULL)
                     throw CanceledException();
                 // Cache the read buffer for the current thread
@@ -287,12 +288,12 @@ VOID __fastcall HashSaveWorkerMain( PHASHSAVECONTEXT phsctx )
     if (bMultithreaded)
     {
         for (void* pBuffer : vecBuffers)
-            VirtualFree(pBuffer, 0, MEM_RELEASE);
+            free(pBuffer);
         DeleteCriticalSection(&updateCritSec);
     }
     else
 #endif
-        VirtualFree(pbTheBuffer, 0, MEM_RELEASE);
+        free(pbTheBuffer);
 }
 
 

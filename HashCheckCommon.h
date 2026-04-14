@@ -21,9 +21,14 @@ extern "C" {
 
 // Tuning constants
 #define MAX_PATH_BUFFER       0x800
-#define READ_BUFFER_SIZE      0x40000
+#define READ_BUFFER_SIZE      0x40000  // 256 KiB default read buffer
+#define READ_BUFFER_SIZE_HDD  (256 * 1024)  // 256 KiB for HDDs
+#define READ_BUFFER_SIZE_SSD  (1024 * 1024) // 1 MiB for SSDs
 #define BASE_STACK_SIZE       0x1000
 #define MARQUEE_INTERVAL      100  // marquee progress bar animation interval
+#define WORKER_THREAD_CLEANUP_TIMEOUT_MS  10000  // 10 seconds to wait for worker thread cleanup
+#define MSG_THROTTLE_THRESHOLD  50   // max pending messages before throttling
+#define PAUSE_TIMER_INTERVAL_MS 750  // timer interval for pause state color refresh
 
 // Progress bar states (Vista-only)
 #ifndef PBM_SETSTATE
@@ -77,6 +82,7 @@ typedef struct {
 	HANDLE             hThread;      // handle of the worker thread
 	HANDLE             hUnpauseEvent;// handle of the event which signals when unpaused
 	PFNWORKERMAIN      pfnWorkerMain;// worker function executed by the (non-GUI) thread
+	DWORD              dwReadBufferSize; // size of the read buffer, in bytes
 } COMMONCONTEXT, *PCOMMONCONTEXT;
 
 // File size
