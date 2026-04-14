@@ -11,10 +11,12 @@
 #include <assert.h>
 #include "globals.h"
 #include "HashCheckCommon.h"
+#include "IsSSD.h"
 #include "GetHighMSB.h"
 #include <Strsafe.h>
 
 #define PROGRESS_BAR_STEPS 300
+#define BLAKE3_TBB_MIN_FILE_SIZE (128ULL * 1024ULL)
 
 HANDLE __fastcall CreateThreadCRT( PVOID pThreadProc, PVOID pvParam )
 {
@@ -57,6 +59,73 @@ HANDLE __fastcall OpenFileForReading( PCTSTR pszPath )
 		FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN,
 		NULL
 	));
+}
+
+DWORD WINAPI GetReadBufferSizeForPath( PCTSTR pszPath )
+{
+	return((pszPath && IsSSD(pszPath)) ? READ_BUFFER_SIZE_SSD : READ_BUFFER_SIZE_HDD);
+}
+
+#if defined(HASHCHECK_BLAKE3_TBB_ENABLED) && defined(HASHCHECK_BLAKE3_TBB_DELAYLOAD)
+static BOOL WINAPI IsBLAKE3TbbRuntimeAvailable( )
+{
+	static volatile LONG s_lTbbState = 0; // 0 = unknown, 1 = unavailable, 2 = available, 3 = checking
+	static HMODULE s_hTbb = NULL;
+
+	LONG lState = InterlockedCompareExchange(&s_lTbbState, 3, 0);
+
+	if (lState == 0)
+	{
+		s_hTbb = LoadLibrary(TEXT("tbb12.dll"));
+		InterlockedExchange(&s_lTbbState, s_hTbb ? 2 : 1);
+	}
+	else
+	{
+		while (lState == 3)
+		{
+			Sleep(0);
+			lState = s_lTbbState;
+		}
+	}
+
+	return(s_lTbbState == 2);
+}
+#endif
+
+BOOL WINAPI ShouldUseBLAKE3Tbb( const WHCTXEX* pwhctx, ULONGLONG cbFileSize,
+                                DWORD dwReadBufferSize, BOOL bOuterMultithreaded )
+{
+#if defined(HASHCHECK_BLAKE3_TBB_ENABLED)
+	if (!pwhctx)
+		return(FALSE);
+
+	if (pwhctx->dwFlags != WHEX_CHECKBLAKE3)
+		return(FALSE);
+
+	if (bOuterMultithreaded)
+		return(FALSE);
+
+	if (g_uWinVer < 0x0600)
+		return(FALSE);
+
+	if (dwReadBufferSize == 0)
+		return(FALSE);
+
+	if (cbFileSize <= BLAKE3_TBB_MIN_FILE_SIZE || cbFileSize > dwReadBufferSize)
+		return(FALSE);
+
+#if defined(HASHCHECK_BLAKE3_TBB_DELAYLOAD)
+	return(IsBLAKE3TbbRuntimeAvailable());
+#else
+	return(TRUE);
+#endif
+#else
+	UNREFERENCED_PARAMETER(pwhctx);
+	UNREFERENCED_PARAMETER(cbFileSize);
+	UNREFERENCED_PARAMETER(dwReadBufferSize);
+	UNREFERENCED_PARAMETER(bOuterMultithreaded);
+	return(FALSE);
+#endif
 }
 
 VOID __fastcall HCNormalizeString( PTSTR psz )
@@ -405,36 +474,62 @@ VOID WINAPI WorkerThreadHashFile( PCOMMONCONTEXT pcmnctx, PCTSTR pszPath,
 			// progress bar is updated only once every 4 buffer reads (512K)
 			WHInitEx(pwhctx);
 
-			do // Outer loop: keep going until the end
+#if defined(HASHCHECK_BLAKE3_TBB_ENABLED)
+			if (ShouldUseBLAKE3Tbb(pwhctx, cbFileSize, dwReadBufferSize, pcmnctx->bOuterMultithreaded))
 			{
-				do // Inner loop: break every 4 cycles or if the end is reached
+                if (pcmnctx->status == PAUSED)
+                    WaitForSingleObject(pcmnctx->hUnpauseEvent, INFINITE);
+				if (pcmnctx->status == CANCEL_REQUESTED)
 				{
-                    if (pcmnctx->status == PAUSED)
-                        WaitForSingleObject(pcmnctx->hUnpauseEvent, INFINITE);
-					if (pcmnctx->status == CANCEL_REQUESTED)
+					CloseHandle(hFile);
+					return;
+				}
+
+				if (!ReadFile(hFile, pbuffer, (DWORD)cbFileSize, &cbBufferRead, NULL))
+				{
+					cbBufferRead = 0;
+					bReadError = TRUE;
+				}
+				else
+				{
+					WHUpdateBLAKE3Tbb(&pwhctx->ctxBLAKE3, pbuffer, cbBufferRead);
+					cbFileRead += cbBufferRead;
+				}
+			}
+			else
+#endif
+			{
+				do // Outer loop: keep going until the end
+				{
+					do // Inner loop: break every 4 cycles or if the end is reached
 					{
-						CloseHandle(hFile);
-						return;
-					}
+                        if (pcmnctx->status == PAUSED)
+                            WaitForSingleObject(pcmnctx->hUnpauseEvent, INFINITE);
+						if (pcmnctx->status == CANCEL_REQUESTED)
+						{
+							CloseHandle(hFile);
+							return;
+						}
 
-					if (!ReadFile(hFile, pbuffer, dwReadBufferSize, &cbBufferRead, NULL))
-					{
-						cbBufferRead = 0;
-						bReadError = TRUE;
-					}
-					else
-					{
-						WHUpdateEx(pwhctx, pbuffer, cbBufferRead);
-						cbFileRead += cbBufferRead;
-					}
+						if (!ReadFile(hFile, pbuffer, dwReadBufferSize, &cbBufferRead, NULL))
+						{
+							cbBufferRead = 0;
+							bReadError = TRUE;
+						}
+						else
+						{
+							WHUpdateEx(pwhctx, pbuffer, cbBufferRead);
+							cbFileRead += cbBufferRead;
+						}
 
-				} while (cbBufferRead == dwReadBufferSize && (++cInner & 0x03));
+					} while (cbBufferRead == dwReadBufferSize && (++cInner & 0x03));
 
-				if (bUpdateProgress)
-					UpdateProgressBar(pcmnctx->hWndPBFile, pUpdateCritSec, &bCurrentlyUpdating,
-					                  pcbCurrentMaxSize, cbFileSize, cbFileRead, &lastProgress);
+					if (bUpdateProgress)
+						UpdateProgressBar(pcmnctx->hWndPBFile, pUpdateCritSec, &bCurrentlyUpdating,
+						                  pcbCurrentMaxSize, cbFileSize, cbFileRead, &lastProgress);
 
-			} while (cbBufferRead == dwReadBufferSize);
+				} while (cbBufferRead == dwReadBufferSize);
+			}
 
 			WHFinishEx(pwhctx, pwhres);
 #ifdef _TIMED

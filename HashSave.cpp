@@ -13,7 +13,6 @@
 #include "HashCheckCommon.h"
 #include "HashCalc.h"
 #include "SetAppID.h"
-#include "IsSSD.h"
 #include <Strsafe.h>
 #include <vector>
 #include <cassert>
@@ -67,7 +66,8 @@ VOID WINAPI HashSaveStart( HWND hWndOwner, HSIMPLELIST hListRaw )
 
 		phsctx->hWnd = hWndOwner;
 		phsctx->hListRaw = hListRaw;
-		phsctx->dwReadBufferSize = READ_BUFFER_SIZE;
+		phsctx->dwReadBufferSize = GetReadBufferSizeForPath(NULL);
+		phsctx->bOuterMultithreaded = FALSE;
 
 		InterlockedIncrement(&g_cRefThisDll);
 		SLAddRef(hListRaw);
@@ -165,8 +165,10 @@ VOID __fastcall HashSaveWorkerMain( PHASHSAVECONTEXT phsctx )
     vecpItems.pop_back();
     assert(vecpItems.back() != nullptr);
 
+    phsctx->dwReadBufferSize = GetReadBufferSizeForPath(vecpItems.empty() ? NULL : vecpItems[0]->szPath);
+
 #ifdef USE_PPL
-    const bool bMultithreaded = vecpItems.size() > 1 && IsSSD(vecpItems[0]->szPath);
+    const bool bMultithreaded = vecpItems.size() > 1 && phsctx->dwReadBufferSize == READ_BUFFER_SIZE_SSD;
     concurrency::concurrent_vector<void*> vecBuffers;  // a vector of all allocated read buffers (one per thread)
     DWORD dwBufferTlsIndex = TlsAlloc();               // TLS index of the current thread's read buffer
     if (dwBufferTlsIndex == TLS_OUT_OF_INDEXES)
@@ -174,11 +176,12 @@ VOID __fastcall HashSaveWorkerMain( PHASHSAVECONTEXT phsctx )
 #else
     constexpr bool bMultithreaded = false;
 #endif
+    phsctx->bOuterMultithreaded = bMultithreaded ? TRUE : FALSE;
 
     PBYTE pbTheBuffer;  // file read buffer, used iff not multithreaded
     if (! bMultithreaded)
     {
-        pbTheBuffer = (PBYTE)malloc(READ_BUFFER_SIZE);
+        pbTheBuffer = (PBYTE)malloc(phsctx->dwReadBufferSize);
         if (pbTheBuffer == NULL)
             return;
     }
@@ -212,7 +215,7 @@ VOID __fastcall HashSaveWorkerMain( PHASHSAVECONTEXT phsctx )
             pbBuffer = (PBYTE)TlsGetValue(dwBufferTlsIndex);
             if (pbBuffer == NULL)
             {
-                pbBuffer = (PBYTE)malloc(READ_BUFFER_SIZE);
+                pbBuffer = (PBYTE)malloc(phsctx->dwReadBufferSize);
                 if (pbBuffer == NULL)
                     throw CanceledException();
                 // Cache the read buffer for the current thread

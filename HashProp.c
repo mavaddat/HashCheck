@@ -12,7 +12,6 @@
 #include "globals.h"
 #include "HashCheckCommon.h"
 #include "HashCalc.h"
-#include "IsSSD.h"
 #include "libs/WinHash.h"
 #include <Strsafe.h>
 #include <assert.h>
@@ -114,9 +113,10 @@ VOID __fastcall HashPropWorkerMain( PHASHPROPCONTEXT phpctx )
 
 	// Which checksum types we want to calculate
     // (this is loaded earlier in HashPropDlgInit())
-    DWORD checksumFlags = (UINT8)phpctx->opt.dwChecksums;
+	DWORD checksumFlags = (UINT8)phpctx->opt.dwChecksums;
 
 	phpctx->dwReadBufferSize = 0;
+	phpctx->bOuterMultithreaded = FALSE;
 
     // Read buffer
     PBYTE pbBuffer = NULL;
@@ -134,13 +134,7 @@ VOID __fastcall HashPropWorkerMain( PHASHPROPCONTEXT phpctx )
         whctx.dwFlags = checksumFlags & ~pItem->results.dwFlags;
 
 		if (phpctx->dwReadBufferSize == 0)
-		{
-			// Set the read buffer size based on the disk type
-			if (IsSSD(pItem->szPath))
-				phpctx->dwReadBufferSize = READ_BUFFER_SIZE_SSD;
-			else
-				phpctx->dwReadBufferSize = READ_BUFFER_SIZE_HDD;
-		}
+			phpctx->dwReadBufferSize = GetReadBufferSizeForPath(pItem->szPath);
 
 		if (pbBuffer == NULL)
 		{

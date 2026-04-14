@@ -27,6 +27,11 @@ extern "C" {
 #define USE_PPL
 #endif
 
+#if defined(HASHCHECK_EXPERIMENTAL_BLAKE3_TBB) && defined(BLAKE3_USE_TBB) && \
+    (defined(_M_X64) || defined(__x86_64__)) && !defined(_M_ARM64EC)
+#define HASHCHECK_BLAKE3_TBB_ENABLED 1
+#endif
+
 typedef CONST BYTE *PCBYTE;
 
 #define CRLF _T("\r\n")
@@ -257,6 +262,13 @@ __inline void WHAPI WHUpdateBLAKE3(PWHCTXBLAKE3 pContext, PCBYTE pbIn, UINT cbIn
 {
     blake3_hasher_update(&pContext->m_ctx, pbIn, cbIn);
 }
+
+#if defined(HASHCHECK_BLAKE3_TBB_ENABLED)
+__inline void WHAPI WHUpdateBLAKE3Tbb(PWHCTXBLAKE3 pContext, PCBYTE pbIn, UINT cbIn)
+{
+    blake3_hasher_update_tbb(&pContext->m_ctx, pbIn, cbIn);
+}
+#endif
 
 __inline void WHAPI WHFinishBLAKE3(PWHCTXBLAKE3 pContext)
 {

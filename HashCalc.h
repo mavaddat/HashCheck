@@ -68,6 +68,7 @@ typedef struct {
 	HANDLE             hUnpauseEvent;// handle of the event which signals when unpaused
 	PFNWORKERMAIN      pfnWorkerMain;// worker function executed by the (non-GUI) thread
 	DWORD              dwReadBufferSize; // size of the read buffer, in bytes
+	BOOL               bOuterMultithreaded; // TRUE when files are already hashed in parallel
 	// Members specific to HashCalc
 	HSIMPLELIST        hListRaw;     // data from IShellExtInit
 	HSIMPLELIST        hList;        // our expanded/processed data

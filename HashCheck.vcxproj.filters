@@ -81,6 +81,9 @@
     <ClCompile Include="libs\BLAKE3\blake3.c">
       <Filter>Libraries\Blake3</Filter>
     </ClCompile>
+    <ClCompile Include="libs\BLAKE3\blake3_tbb.cpp">
+      <Filter>Libraries\Blake3</Filter>
+    </ClCompile>
     <ClCompile Include="libs\BLAKE3\blake3_avx2.c">
       <Filter>Libraries\Blake3</Filter>
     </ClCompile>

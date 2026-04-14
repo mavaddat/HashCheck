@@ -83,6 +83,7 @@ typedef struct {
 	HANDLE             hUnpauseEvent;// handle of the event which signals when unpaused
 	PFNWORKERMAIN      pfnWorkerMain;// worker function executed by the (non-GUI) thread
 	DWORD              dwReadBufferSize; // size of the read buffer, in bytes
+	BOOL               bOuterMultithreaded; // TRUE when files are already hashed in parallel
 } COMMONCONTEXT, *PCOMMONCONTEXT;
 
 // File size
@@ -93,6 +94,9 @@ typedef struct {
 
 // Convenience wrappers
 HANDLE __fastcall OpenFileForReading( PCTSTR pszPath );
+DWORD WINAPI GetReadBufferSizeForPath( PCTSTR pszPath );
+BOOL WINAPI ShouldUseBLAKE3Tbb( const WHCTXEX* pwhctx, ULONGLONG cbFileSize,
+                                DWORD dwReadBufferSize, BOOL bOuterMultithreaded );
 
 // Parsing helpers
 VOID __fastcall HCNormalizeString( PTSTR psz );

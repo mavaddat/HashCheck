@@ -13,7 +13,6 @@
 #include "HashCheckCommon.h"
 #include "SetAppID.h"
 #include "UnicodeHelpers.h"
-#include "IsSSD.h"
 #include <uxtheme.h>
 #include <Strsafe.h>
 #include <cassert>
@@ -95,6 +94,7 @@ typedef struct {
 	HANDLE             hUnpauseEvent;// handle of the event which signals when unpaused
 	PFNWORKERMAIN      pfnWorkerMain;// worker function executed by the (non-GUI) thread
 	DWORD              dwReadBufferSize; // size of the read buffer, in bytes
+	BOOL               bOuterMultithreaded; // TRUE when files are already hashed in parallel
 	// Members specific to HashVerify
 	HWND               hWndList;     // handle of the list
 	HSIMPLELIST        hList;        // where we store all the data
@@ -194,7 +194,8 @@ DWORD WINAPI HashVerifyThread( PTSTR pszPath )
 	HCNormalizeString(pszPath);
 	StrTrim(pszPath, TEXT(" "));
 	hvctx.pszPath = pszPath;
-	hvctx.dwReadBufferSize = READ_BUFFER_SIZE;
+	hvctx.dwReadBufferSize = GetReadBufferSizeForPath(pszPath);
+	hvctx.bOuterMultithreaded = FALSE;
 
 	// Load the raw data
 	pbRawData = HashVerifyLoadData(&hvctx);
@@ -509,14 +510,17 @@ VOID __fastcall HashVerifyWorkerMain( PHASHVERIFYCONTEXT phvctx )
 	PTSTR pszPathTail = StrRChr(phvctx->pszPath, NULL, TEXT('\\'));
 	SIZE_T cchPathPrefix = (pszPathTail) ? pszPathTail + 1 - phvctx->pszPath : 0;
 
+    PCTSTR pszReadBufferPath = phvctx->pszPath;
+    if (phvctx->cTotal > 0 && phvctx->index)
+    {
+        PCTSTR pszFirstPath = phvctx->index[0]->pszDisplayName;
+        if (pszFirstPath[0] == TEXT('\\') || pszFirstPath[1] == TEXT(':'))
+            pszReadBufferPath = pszFirstPath;
+    }
+    phvctx->dwReadBufferSize = GetReadBufferSizeForPath(pszReadBufferPath);
+
 #ifdef USE_PPL
-    // If the first file has an absolute path, use it for IsSSD(),
-    // otherwise use the checksum file itself
-    const bool bMultithreaded = phvctx->cTotal > 1 && IsSSD(
-        phvctx->index[0]->pszDisplayName[0] == TEXT('\\') ||
-        phvctx->index[0]->pszDisplayName[1] == TEXT(':') ?
-        phvctx->index[0]->pszDisplayName :
-        phvctx->pszPath);
+    const bool bMultithreaded = phvctx->cTotal > 1 && phvctx->dwReadBufferSize == READ_BUFFER_SIZE_SSD;
 
     concurrency::concurrent_vector<void*> vecBuffers;  // a vector of all allocated read buffers (one per thread)
     DWORD dwBufferTlsIndex = TlsAlloc();               // TLS index of the current thread's read buffer
@@ -525,11 +529,12 @@ VOID __fastcall HashVerifyWorkerMain( PHASHVERIFYCONTEXT phvctx )
 #else
     constexpr bool bMultithreaded = false;
 #endif
+    phvctx->bOuterMultithreaded = bMultithreaded ? TRUE : FALSE;
 
     PBYTE pbTheBuffer;  // filename/read buffer, used iff not multithreaded
     if (! bMultithreaded)
     {
-        pbTheBuffer = (PBYTE)malloc(READ_BUFFER_SIZE);
+        pbTheBuffer = (PBYTE)malloc(phvctx->dwReadBufferSize);
         if (pbTheBuffer == NULL)
             return;
     }
@@ -557,7 +562,7 @@ VOID __fastcall HashVerifyWorkerMain( PHASHVERIFYCONTEXT phvctx )
             pbBuffer = (PBYTE)TlsGetValue(dwBufferTlsIndex);
             if (pbBuffer == NULL)
             {
-                pbBuffer = (PBYTE)malloc(READ_BUFFER_SIZE);
+                pbBuffer = (PBYTE)malloc(phvctx->dwReadBufferSize);
                 if (pbBuffer == NULL)
                     throw CanceledException();
                 // Cache the read buffer for the current thread
