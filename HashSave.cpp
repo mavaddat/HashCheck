@@ -22,6 +22,12 @@
 #include <concurrent_vector.h>
 #endif
 
+#ifdef UNICODE
+#define StrCmpLogical StrCmpLogicalW
+#else
+#define StrCmpLogical StrCmpIA
+#endif
+
 // Control structures, from HashCalc.h
 #define  HASHSAVESCRATCH  HASHCALCSCRATCH
 #define PHASHSAVESCRATCH PHASHCALCSCRATCH
@@ -246,15 +252,13 @@ VOID __fastcall HashSaveWorkerMain( PHASHSAVECONTEXT phsctx )
 		if (phsctx->status == CANCEL_REQUESTED)
             throw CanceledException();
 
-		// Write the data
-		HashCalcWriteResult(phsctx, pItem);
-
 		// Update the UI
 		InterlockedIncrement(&phsctx->cSentMsgs);
 		PostMessage(phsctx->hWnd, HM_WORKERTHREAD_UPDATE, (WPARAM)phsctx, (LPARAM)pItem);
     };
 #pragma warning(pop)
 
+    bool bHashingCompleted = false;
     try
     {
 #ifdef USE_PPL
@@ -263,11 +267,29 @@ VOID __fastcall HashSaveWorkerMain( PHASHSAVECONTEXT phsctx )
         else
 #endif
             std::for_each(vecpItems.cbegin(), vecpItems.cend(), per_file_worker);
+        bHashingCompleted = true;
     }
     catch (CanceledException) {}  // ignore cancellation requests
 
+    if (bHashingCompleted && phsctx->status != CANCEL_REQUESTED)
+    {
+        std::stable_sort(
+            vecpItems.begin(),
+            vecpItems.end(),
+            [phsctx](PHASHSAVEITEM pItemA, PHASHSAVEITEM pItemB)
+            {
+                return(StrCmpLogical(
+                    pItemA->szPath + phsctx->cchAdjusted,
+                    pItemB->szPath + phsctx->cchAdjusted) < 0);
+            }
+        );
+
+        for (PHASHSAVEITEM pItem : vecpItems)
+            HashCalcWriteResult(phsctx, pItem);
+    }
+
 #ifdef _TIMED
-    if (phsctx->cTotal > 1 && phsctx->status != CANCEL_REQUESTED)
+    if (bHashingCompleted && phsctx->cTotal > 1 && phsctx->status != CANCEL_REQUESTED)
     {
         union {
             CHAR  szA[MAX_STRINGMSG];
