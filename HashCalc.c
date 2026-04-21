@@ -675,17 +675,7 @@ VOID WINAPI HashCalcSetSavePrefix( PHASHCALCCONTEXT phcctx, PTSTR pszSave )
 
 	// If we have reached this point, we need to use an absolute path
 
-	if ( pszSave[1] == TEXT(':') && phcctx->cchPrefix > 2 &&
-	     StrCmpNI(pszOrig, pszSave, 2) == 0 )
-	{
-		// Omit drive letter
-		phcctx->cchAdjusted = 2;
-	}
-	else
-	{
-		// Full absolute path
-		phcctx->cchAdjusted = 0;
-	}
+	phcctx->cchAdjusted = 0;
 }
 
 
