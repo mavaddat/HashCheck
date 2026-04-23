@@ -12,6 +12,12 @@
 /*.vcxproj whitespace=cr-at-eol
 /*.filters whitespace=cr-at-eol
 /installer/*.nsi whitespace=cr-at-eol
+/libs/*.c whitespace=cr-at-eol
+/libs/*.cpp whitespace=cr-at-eol
+/libs/*.h whitespace=cr-at-eol
+/UnitTests/*.cs whitespace=cr-at-eol
+/UnitTests/*.csproj whitespace=cr-at-eol
+/UnitTests/*.py whitespace=cr-at-eol
 
 # Keep vendored oneTBB text files in upstream form without making
 # git diff --check report formatting that comes from the upstream package.

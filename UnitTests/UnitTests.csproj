@@ -85,6 +85,10 @@
     <Content Include="gen-big-test-vector.py" />
     <Content Include="get-md5-test-vectors.py" />
     <Content Include="get-sha-test-vectors.py" />
+    <Content Include="SHA256LongMsg.rsp-0000.xxh3" />
+    <Content Include="SHA256LongMsg.rsp-0000.xxh128" />
+    <Content Include="SHA256LongMsg.rsp-0000.xxh3.asc" />
+    <Content Include="SHA256LongMsg.rsp-0000.xxh128.asc" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <Target Name="EnsureNuGetPackageBuildImports" BeforeTargets="PrepareForBuild">

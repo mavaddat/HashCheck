@@ -125,7 +125,7 @@ VOID __fastcall HashPropWorkerMain( PHASHPROPCONTEXT phpctx )
 
 	// Which checksum types we want to calculate
     // (this is loaded earlier in HashPropDlgInit())
-	DWORD checksumFlags = (UINT8)phpctx->opt.dwChecksums;
+	DWORD checksumFlags = phpctx->opt.dwChecksums;
 
 	phpctx->dwReadBufferSize = 0;
 	phpctx->bOuterMultithreaded = FALSE;

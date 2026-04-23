@@ -70,3 +70,5 @@
 #define IDC_OPT_EOL_CRLF                523
 #define IDC_OPT_EOL_LF                  524
 #define IDC_OPT_EOL_FIRSTID             IDC_OPT_EOL_CRLF
+#define IDC_OPT_CHK_XXH3_64             525
+#define IDC_OPT_CHK_XXH3_128            526

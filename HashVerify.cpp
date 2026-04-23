@@ -282,6 +282,8 @@ VOID WINAPI HashVerifyParseData( PHASHVERIFYCONTEXT phvctx )
 	UINT cchChecksum;             // Expected length of the checksum in TCHARs
 	BOOL bReverseFormat = FALSE;  // TRUE if using SFV's format of putting the checksum last
 	BOOL bLinesRemaining = TRUE;  // TRUE if we have not reached the end of the data
+	static const TCHAR szXXH3_64Prefix[] = TEXT("XXH3_");
+	static const UINT cchXXH3_64Prefix = countof(szXXH3_64Prefix) - 1;
 
 	// Try to determine the file type from the extension
 	{
@@ -313,6 +315,7 @@ VOID WINAPI HashVerifyParseData( PHASHVERIFYCONTEXT phvctx )
 		PTSTR pszEndOfLine;    // Last non-whitespace character of the line
 		PTSTR pszChecksum = NULL, pszFileName = NULL;
 		INT16 cchPath;         // This INCLUDES the NULL terminator!
+		UINT cchChecksumPrefix = 0;
 
 		// Step 1: Isolate the current line as a NULL-terminated string
 		{
@@ -373,11 +376,25 @@ VOID WINAPI HashVerifyParseData( PHASHVERIFYCONTEXT phvctx )
 					cchChecksum = 8;
 					phvctx->whctxFlags = WHEX_ALL32;  // WHEX_CHECKCRC32
 				}
+				// XXH3-64 GNU format (XXH3_ + 16-character hex digest)
+				else if ( StrCmpNI(pszStartOfLine, szXXH3_64Prefix, cchXXH3_64Prefix) == 0 &&
+				          ValidateHexSequence(pszStartOfLine + cchXXH3_64Prefix, 16) )
+				{
+					cchChecksumPrefix = cchXXH3_64Prefix;
+					cchChecksum = 16;
+					phvctx->whctxFlags = WHEX_CHECKXXH3_64;
+				}
+				// 64-bit algorithms (16-byte)
+				else if (ValidateHexSequence(pszStartOfLine, 16))
+				{
+					cchChecksum = 16;
+					phvctx->whctxFlags = WHEX_ALL64;  // WHEX_CHECKXXH3_64
+				}
 				// 128-bit algorithms (32-byte)
 				else if (ValidateHexSequence(pszStartOfLine, 32))
 				{
 					cchChecksum = 32;
-					phvctx->whctxFlags = WHEX_ALL128;  // WHEX_CHECKMD5
+					phvctx->whctxFlags = WHEX_ALL128;  // WHEX_CHECKMD5 | WHEX_CHECKXXH3_128
 				}
 				// 160-bit algorithms (40-byte)
 				else if (ValidateHexSequence(pszStartOfLine, 40))
@@ -385,29 +402,38 @@ VOID WINAPI HashVerifyParseData( PHASHVERIFYCONTEXT phvctx )
 					cchChecksum = 40;
 					phvctx->whctxFlags = WHEX_ALL160;  // WHEX_CHECKSHA1
 				}
-				// 256-bit algorithms (64-byte)
+				// 256-bit algorithms (64-character)
 				else if (ValidateHexSequence(pszStartOfLine, 64))
 				{
 					cchChecksum = 64;
 					phvctx->whctxFlags = WHEX_ALL256;  // WHEX_CHECKSHA256 | WHEX_CHECKSHA3_256
 				}
-				// 512-bit algorithms (128-byte)
+				// 512-bit algorithms (128-character)
 				else if (ValidateHexSequence(pszStartOfLine, 128))
 				{
 					cchChecksum = 128;
 					phvctx->whctxFlags = WHEX_ALL512;  // WHEX_CHECKSHA512 | WHEX_CHECKSHA3_512
 				}
 			}
+			else if ( (phvctx->whctxFlags & WHEX_CHECKXXH3_64) &&
+			          StrCmpNI(pszStartOfLine, szXXH3_64Prefix, cchXXH3_64Prefix) == 0 )
+			{
+				cchChecksumPrefix = cchXXH3_64Prefix;
+			}
 
 			// Parse the line
-			if ( phvctx->whctxFlags && pszEndOfLine > pszStartOfLine + cchChecksum &&
-			     ValidateHexSequence(pszStartOfLine, cchChecksum) )
+			if ( phvctx->whctxFlags && pszEndOfLine > pszStartOfLine + cchChecksumPrefix + cchChecksum &&
+			     ValidateHexSequence(pszStartOfLine + cchChecksumPrefix, cchChecksum) )
 			{
-				pszChecksum = pszStartOfLine;
-				pszStartOfLine += cchChecksum + 1;
+				pszChecksum = pszStartOfLine + cchChecksumPrefix;
+				pszStartOfLine += cchChecksumPrefix + cchChecksum + 1;
 
 				// Skip over spaces between the checksum and filename
 				while (*pszStartOfLine == TEXT(' '))
+					++pszStartOfLine;
+
+				// Skip the GNU binary-mode filename marker
+				if (*pszStartOfLine == TEXT('*'))
 					++pszStartOfLine;
 
 				if (*pszStartOfLine)
@@ -948,6 +974,8 @@ VOID WINAPI HashVerifyDlgInit( PHASHVERIFYCONTEXT phvctx )
                     rc.left = 160 + 20;
                 else if (phvctx->whctxFlags & WHEX_ALL128)
                     rc.left = 128 + 20;
+                else if (phvctx->whctxFlags & WHEX_ALL64)
+                    rc.left =  64 + 20;
                 else if (phvctx->whctxFlags & WHEX_ALL32)
                     rc.left =  32 + 20 + 40;  // extra size to accommodate the header labels
 			}

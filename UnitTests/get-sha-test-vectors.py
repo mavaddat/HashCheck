@@ -20,13 +20,19 @@ if not os.path.isdir(test_vectors_dir):
 
 # Download and unzip the two NIST test vector "response" files
 
-for sha_url in ('http://csrc.nist.gov/groups/STM/cavp/documents/shs/shabytetestvectors.zip',
-                'http://csrc.nist.gov/groups/STM/cavp/documents/sha3/sha-3bytetestvectors.zip'):
+for sha_url in ('https://csrc.nist.gov/groups/STM/cavp/documents/shs/shabytetestvectors.zip',
+                'https://csrc.nist.gov/groups/STM/cavp/documents/sha3/sha-3bytetestvectors.zip'):
     print('downloading and extracting', sha_url)
-    with urllib.request.urlopen(sha_url) as sha_downloading:              # open connection to the download url;
+    sha_request = urllib.request.Request(sha_url, headers={'User-Agent': 'Mozilla/5.0'})
+    with urllib.request.urlopen(sha_request) as sha_downloading:          # open connection to the download url;
         with io.BytesIO(sha_downloading.read()) as sha_downloaded_zip:    # download entirely into ram;
             with zipfile.ZipFile(sha_downloaded_zip) as sha_zipcontents:  # open the zip file from ram;
-                sha_zipcontents.extractall(test_vectors_dir)              # extract the zip file into the output dir
+                for sha_member in sha_zipcontents.infolist():
+                    sha_member_basename = os.path.basename(sha_member.filename)
+                    if sha_member_basename:
+                        with sha_zipcontents.open(sha_member) as sha_source:
+                            with open(os.path.join(test_vectors_dir, sha_member_basename), 'wb') as sha_output:
+                                sha_output.write(sha_source.read())       # extract file entries into the output dir
 
 
 # Convert each response file into a set of test vector files and a single expected .sha* file

@@ -73,12 +73,16 @@ namespace UnitTests
         [InlineData("SHA3_256LongMsg.rsp.sha3-256",  IDC_MATCH_RESULTS)]
         [InlineData("SHA3_512ShortMsg.rsp.sha3-512", IDC_MATCH_RESULTS)]
         [InlineData("SHA3_512LongMsg.rsp.sha3-512",  IDC_MATCH_RESULTS)]
+        [InlineData("SHA256LongMsg.rsp-0000.xxh3",   IDC_MATCH_RESULTS)]
+        [InlineData("SHA256LongMsg.rsp-0000.xxh128", IDC_MATCH_RESULTS)]
         [InlineData("hashcheck.md5",                 IDC_MATCH_RESULTS)]
         [InlineData("hashcheck.sha1",                IDC_MATCH_RESULTS)]
         //
         // tests for disambiguating vectors of the same bit length
         [InlineData("SHA256ShortMsg.rsp.asc",        IDC_MATCH_RESULTS)]
         [InlineData("SHA3_256ShortMsg.rsp.asc",      IDC_MATCH_RESULTS)]
+        [InlineData("SHA256LongMsg.rsp-0000.xxh3.asc",   IDC_MATCH_RESULTS)]
+        [InlineData("SHA256LongMsg.rsp-0000.xxh128.asc", IDC_MATCH_RESULTS)]
         //
         // negative tests
         [InlineData(@"mismatch.sha256",              IDC_MISMATCH_RESULTS)]

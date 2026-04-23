@@ -6,8 +6,8 @@
  * Modified work copyright (C) 2016 Tim Schlueter.  All rights reserved.
  * Modified work copyright (C) 2021 Mounir IDRASSI.  All rights reserved.
  *
- * This is a wrapper for the CRC32, MD5, SHA1, SHA2-256, SHA2-512 and Blake3
- * algorithms.
+ * This is a wrapper for the CRC32, MD5, SHA1, SHA2-256, SHA2-512, Blake3 and
+ * xxHash algorithms.
  *
  * WinHash.cpp is needed only if the WH*To* or WH*Ex functions are used.
  **/

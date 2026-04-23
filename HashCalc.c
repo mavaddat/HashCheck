@@ -443,6 +443,15 @@ VOID WINAPI HashCalcSetSaveFormat( PHASHCALCCONTEXT phcctx )
 				HashCalcLineEnding(phcctx)
 			);
 		}
+		else if (phcctx->ofn.nFilterIndex == XXH3_64)
+		{
+			StringCchPrintf(
+				phcctx->szFormat,
+				countof(phcctx->szFormat),
+				TEXT("XXH3_%%s *%%s%s"),
+				HashCalcLineEnding(phcctx)
+			);
+		}
 		else
 		{
 			StringCchPrintf(

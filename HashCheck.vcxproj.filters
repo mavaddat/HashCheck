@@ -19,6 +19,9 @@
     <Filter Include="Libraries\Blake3">
       <UniqueIdentifier>{1a409514-7703-4479-84ea-3c7ec6f7df14}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Libraries\xxHash">
+      <UniqueIdentifier>{97a2547e-8697-4f55-a5a9-7d37d7f4b244}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="HashCheck.cpp">
@@ -101,6 +104,9 @@
     </ClCompile>
     <ClCompile Include="libs\BLAKE3\blake3_sse41.c">
       <Filter>Libraries\Blake3</Filter>
+    </ClCompile>
+    <ClCompile Include="libs\xxHash\xxhash.c">
+      <Filter>Libraries\xxHash</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -192,6 +198,9 @@
     </ClInclude>
     <ClInclude Include="libs\BLAKE3\blake3_impl.h">
       <Filter>Libraries\Blake3</Filter>
+    </ClInclude>
+    <ClInclude Include="libs\xxHash\xxhash.h">
+      <Filter>Libraries\xxHash</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

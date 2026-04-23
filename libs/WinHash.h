@@ -6,8 +6,8 @@
  * Modified work copyright (C) 2016 Tim Schlueter.  All rights reserved.
  * Modified work copyright (C) 2021 Mounir IDRASSI.  All rights reserved.
  * 
- * This is a wrapper for the CRC32, MD5, SHA1, SHA2-256, SHA2-512 and Blake3
- * algorithms.
+ * This is a wrapper for the CRC32, MD5, SHA1, SHA2-256, SHA2-512, Blake3 and
+ * xxHash algorithms.
  **/
 
 #ifndef __WINHASH_H__
@@ -19,8 +19,13 @@ extern "C" {
 
 #include <windows.h>
 #include <tchar.h>
+#include <string.h>
 #include "openssl\evp.h"
 #include "BLAKE3/\blake3.h"
+#ifndef XXH_STATIC_LINKING_ONLY
+#define XXH_STATIC_LINKING_ONLY
+#endif
+#include "xxHash/xxhash.h"
 #include "BitwiseIntrinsics.h"
 
 #if _MSC_VER >= 1600 && !defined(NO_PPL)
@@ -55,7 +60,9 @@ typedef CONST BYTE *PCBYTE;
                             op(SHA512)  \
                             op(SHA3_256)\
                             op(SHA3_512)\
-                            op(BLAKE3)
+                            op(BLAKE3)  \
+                            op(XXH3_64) \
+                            op(XXH3_128)
 // In approximate order from longest to shortest compute time
 #define FOR_EACH_HASH_R(op) op(SHA512)  \
                             op(SHA256)  \
@@ -64,7 +71,9 @@ typedef CONST BYTE *PCBYTE;
                             op(SHA1)    \
                             op(CRC32)   \
                             op(MD5)     \
-                            op(BLAKE3)
+                            op(BLAKE3)  \
+                            op(XXH3_128)\
+                            op(XXH3_64)
 
 /**
  * Some constants related to the hash algorithms
@@ -79,9 +88,11 @@ enum hash_algorithm {
     SHA512,
     SHA3_256,
     SHA3_512,
-    BLAKE3
+    BLAKE3,
+    XXH3_64,
+    XXH3_128
 };
-#define NUM_HASHES BLAKE3
+#define NUM_HASHES XXH3_128
 
 // The default hash algorithm to use when creating a checksum file
 #define DEFAULT_HASH_ALGORITHM SHA256
@@ -98,12 +109,15 @@ enum hash_algorithm {
 #define WHEX_CHECKSHA3_256  (1UL << (SHA3_256 - 1))
 #define WHEX_CHECKSHA3_512  (1UL << (SHA3_512 - 1))
 #define WHEX_CHECKBLAKE3    (1UL << (BLAKE3 - 1))
-#define WHEX_CHECKLAST      WHEX_CHECKBLAKE3
+#define WHEX_CHECKXXH3_64   (1UL << (XXH3_64 - 1))
+#define WHEX_CHECKXXH3_128  (1UL << (XXH3_128 - 1))
+#define WHEX_CHECKLAST      WHEX_CHECKXXH3_128
 
 // Bitwise representation of the hash algorithms, by digest length (in bits)
 #define WHEX_ALL            ((1UL << NUM_HASHES) - 1)
 #define WHEX_ALL32          WHEX_CHECKCRC32
-#define WHEX_ALL128         WHEX_CHECKMD5
+#define WHEX_ALL64          WHEX_CHECKXXH3_64
+#define WHEX_ALL128         (WHEX_CHECKMD5 | WHEX_CHECKXXH3_128)
 #define WHEX_ALL160         WHEX_CHECKSHA1
 #define WHEX_ALL256         (WHEX_CHECKSHA256 | WHEX_CHECKSHA3_256 | WHEX_CHECKBLAKE3)
 #define WHEX_ALL512         (WHEX_CHECKSHA512 | WHEX_CHECKSHA3_512)
@@ -127,6 +141,8 @@ enum hash_algorithm {
 #define SHA3_256_DIGEST_LENGTH      32
 #define SHA3_512_DIGEST_LENGTH      64
 #define BLAKE3_DIGEST_LENGTH        32
+#define XXH3_64_DIGEST_LENGTH       8
+#define XXH3_128_DIGEST_LENGTH      16
 #define MAX_DIGEST_LENGTH           SHA512_DIGEST_LENGTH
 
 // The minimum string length required to hold the hex digest strings
@@ -140,6 +156,8 @@ enum hash_algorithm {
 #define SHA3_256_DIGEST_STRING_LENGTH (SHA3_256_DIGEST_LENGTH * 2 + 1)
 #define SHA3_512_DIGEST_STRING_LENGTH (SHA3_512_DIGEST_LENGTH * 2 + 1)
 #define BLAKE3_DIGEST_STRING_LENGTH (BLAKE3_DIGEST_LENGTH * 2 + 1)
+#define XXH3_64_DIGEST_STRING_LENGTH (XXH3_64_DIGEST_LENGTH * 2 + 1)
+#define XXH3_128_DIGEST_STRING_LENGTH (XXH3_128_DIGEST_LENGTH * 2 + 1)
 #define MAX_DIGEST_STRING_LENGTH    SHA512_DIGEST_STRING_LENGTH
 
 // Hash file extensions
@@ -151,6 +169,8 @@ enum hash_algorithm {
 #define HASH_EXT_SHA3_256       _T(".sha3-256")
 #define HASH_EXT_SHA3_512       _T(".sha3-512")
 #define HASH_EXT_BLAKE3         _T(".blake3")
+#define HASH_EXT_XXH3_64        _T(".xxh3")
+#define HASH_EXT_XXH3_128       _T(".xxh128")
 
 // Table of supported Hash file extensions, plus .asc
 extern LPCTSTR g_szHashExtsTab[NUM_HASHES + 1];
@@ -164,6 +184,8 @@ extern LPCTSTR g_szHashExtsTab[NUM_HASHES + 1];
 #define HASH_NAME_SHA3_256      _T("SHA3-256")
 #define HASH_NAME_SHA3_512      _T("SHA3-512")
 #define HASH_NAME_BLAKE3        _T("BLAKE3")
+#define HASH_NAME_XXH3_64       _T("XXH3-64")
+#define HASH_NAME_XXH3_128      _T("XXH3-128")
 
 // Right-justified Hash names
 #define HASH_RNAME_CRC32        _T("  CRC-32")
@@ -174,6 +196,8 @@ extern LPCTSTR g_szHashExtsTab[NUM_HASHES + 1];
 #define HASH_RNAME_SHA3_256     _T("SHA3-256")
 #define HASH_RNAME_SHA3_512     _T("SHA3-512")
 #define HASH_RNAME_BLAKE3       _T("  BLAKE3")
+#define HASH_RNAME_XXH3_64      _T(" XXH3-64")
+#define HASH_RNAME_XXH3_128     _T("XXH3-128")
 
 // Hash OPENFILENAME filters, E.G. "MD5 (*.md5)\0*.md5\0"
 #define HASH_FILTER_op(alg)     HASH_NAME_##alg _T(" (*")   \
@@ -211,6 +235,16 @@ typedef union {
     blake3_hasher m_ctx;
     BYTE result[BLAKE3_DIGEST_LENGTH];
 } WHCTXBLAKE3, * PWHCTXBLAKE3;
+
+typedef union {
+    XXH3_state_t m_ctx;
+    BYTE result[XXH3_64_DIGEST_LENGTH];
+} WHCTXXXH3_64, * PWHCTXXXH3_64;
+
+typedef union {
+    XXH3_state_t m_ctx;
+    BYTE result[XXH3_128_DIGEST_LENGTH];
+} WHCTXXXH3_128, * PWHCTXXXH3_128;
 
 /**
  * Wrapper layer functions to ensure a more consistent interface
@@ -277,6 +311,42 @@ __inline void WHAPI WHFinishBLAKE3(PWHCTXBLAKE3 pContext)
     memset(pContext, 0, (size_t) FINDOFFSET(WHCTXBLAKE3,result));
 }
 
+__inline void WHAPI WHInitXXH3_64(PWHCTXXXH3_64 pContext)
+{
+    XXH3_64bits_reset(&pContext->m_ctx);
+}
+
+__inline void WHAPI WHUpdateXXH3_64(PWHCTXXXH3_64 pContext, PCBYTE pbIn, UINT cbIn)
+{
+    XXH3_64bits_update(&pContext->m_ctx, pbIn, cbIn);
+}
+
+__inline void WHAPI WHFinishXXH3_64(PWHCTXXXH3_64 pContext)
+{
+    XXH64_canonical_t canonical;
+    XXH64_hash_t hash = XXH3_64bits_digest(&pContext->m_ctx);
+    XXH64_canonicalFromHash(&canonical, hash);
+    memcpy(pContext->result, canonical.digest, XXH3_64_DIGEST_LENGTH);
+}
+
+__inline void WHAPI WHInitXXH3_128(PWHCTXXXH3_128 pContext)
+{
+    XXH3_128bits_reset(&pContext->m_ctx);
+}
+
+__inline void WHAPI WHUpdateXXH3_128(PWHCTXXXH3_128 pContext, PCBYTE pbIn, UINT cbIn)
+{
+    XXH3_128bits_update(&pContext->m_ctx, pbIn, cbIn);
+}
+
+__inline void WHAPI WHFinishXXH3_128(PWHCTXXXH3_128 pContext)
+{
+    XXH128_canonical_t canonical;
+    XXH128_hash_t hash = XXH3_128bits_digest(&pContext->m_ctx);
+    XXH128_canonicalFromHash(&canonical, hash);
+    memcpy(pContext->result, canonical.digest, XXH3_128_DIGEST_LENGTH);
+}
+
 #define WHInitMD5(a) OPENSSL_HASH_INIT(a,EVP_md5())
 #define WHUpdateMD5 OPENSSL_HASH_UPDATE
 #define WHFinishMD5 OPENSSL_HASH_FINISH
@@ -326,6 +396,8 @@ typedef struct {
     TCHAR szHexSHA3_256[SHA3_256_DIGEST_STRING_LENGTH];
     TCHAR szHexSHA3_512[SHA3_512_DIGEST_STRING_LENGTH];
     TCHAR szHexBLAKE3[BLAKE3_DIGEST_STRING_LENGTH];
+    TCHAR szHexXXH3_64[XXH3_64_DIGEST_STRING_LENGTH];
+    TCHAR szHexXXH3_128[XXH3_128_DIGEST_STRING_LENGTH];
     DWORD dwFlags;
 } WHRESULTEX, *PWHRESULTEX;
 
@@ -339,6 +411,8 @@ typedef struct {
 	__declspec(align(64)) WHCTXOPENSSL ctxSHA3_256;
 	__declspec(align(64)) WHCTXOPENSSL ctxSHA3_512;
     __declspec(align(64)) WHCTXBLAKE3 ctxBLAKE3;
+    __declspec(align(64)) WHCTXXXH3_64 ctxXXH3_64;
+    __declspec(align(64)) WHCTXXXH3_128 ctxXXH3_128;
 	DWORD dwFlags;
 	UINT8 uCaseMode;
 } WHCTXEX, *PWHCTXEX;

@@ -31,6 +31,11 @@ before_test:
   # tests for disambiguating vectors of the same bit length
   - copy vectors\SHA256ShortMsg.rsp.sha256     vectors\SHA256ShortMsg.rsp.asc
   - copy vectors\SHA3_256ShortMsg.rsp.sha3-256 vectors\SHA3_256ShortMsg.rsp.asc
+  - copy SHA256LongMsg.rsp-0000.xxh3.asc       vectors\
+  - copy SHA256LongMsg.rsp-0000.xxh128.asc     vectors\
+  # tests for XXH3 checksum files
+  - copy SHA256LongMsg.rsp-0000.xxh3           vectors\
+  - copy SHA256LongMsg.rsp-0000.xxh128         vectors\
   # negative tests
   - copy mismatch.sha256   vectors\
   - copy mismatch.sha256   vectors\mismatch.asc

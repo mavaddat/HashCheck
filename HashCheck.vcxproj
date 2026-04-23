@@ -248,6 +248,7 @@
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
     </ClCompile>
     <ClCompile Include="libs\crc32.c" />
+    <ClCompile Include="libs\xxHash\xxhash.c" />
     <ClCompile Include="libs\IsFontAvailable.c" />
     <ClCompile Include="libs\SimpleList.c" />
     <ClCompile Include="libs\SimpleString.c" />
@@ -295,6 +296,7 @@
     <ClInclude Include="IsSSD.h" />
     <ClInclude Include="libs\BLAKE3\blake3.h" />
     <ClInclude Include="libs\BLAKE3\blake3_impl.h" />
+    <ClInclude Include="libs\xxHash\xxhash.h" />
     <ClInclude Include="libs\IsFontAvailable.h" />
     <ClInclude Include="libs\SimpleList.h" />
     <ClInclude Include="libs\SimpleString.h" />
