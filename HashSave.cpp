@@ -44,6 +44,10 @@
 
 // Entry points / main functions
 DWORD WINAPI HashSaveThread( PHASHSAVECONTEXT phsctx );
+HSIMPLELIST WINAPI HashSaveLoadPathListFile( PWSTR pszPathListFile );
+PHASHSAVECONTEXT WINAPI HashSaveCreateContext( HWND hWndOwner, HSIMPLELIST hListRaw );
+VOID WINAPI HashSaveReleaseContext( PHASHSAVECONTEXT phsctx );
+BOOL WINAPI HashSaveStartThread( PHASHSAVECONTEXT phsctx );
 
 // Worker thread
 VOID __fastcall HashSaveWorkerMain( PHASHSAVECONTEXT phsctx );
@@ -58,41 +62,161 @@ VOID WINAPI HashSaveDlgInit( PHASHSAVECONTEXT phsctx );
 	Entry points / main functions
 \*============================================================================*/
 
+VOID CALLBACK HashSave_RunDLLW( HWND hWnd, HINSTANCE, PWSTR pszCmdLine, INT )
+{
+	HSIMPLELIST hListRaw = HashSaveLoadPathListFile(pszCmdLine);
+	if (hListRaw)
+	{
+		PHASHSAVECONTEXT phsctx = HashSaveCreateContext(hWnd, hListRaw);
+		if (phsctx)
+			HashSaveThread(phsctx);
+
+		SLRelease(hListRaw);
+	}
+}
+
 VOID WINAPI HashSaveStart( HWND hWndOwner, HSIMPLELIST hListRaw )
 {
 	// Explorer will be blocking as long as this function is running, so we
 	// want to return as quickly as possible and leave the work up to the
 	// thread that we are going to spawn
 
+	PHASHSAVECONTEXT phsctx = HashSaveCreateContext(hWndOwner, hListRaw);
+
+	if (phsctx)
+	{
+		if (HashSaveStartThread(phsctx))
+			return;
+
+		HashSaveReleaseContext(phsctx);
+	}
+}
+
+HSIMPLELIST WINAPI HashSaveLoadPathListFile( PWSTR pszPathListFile )
+{
+	static const WCHAR szPathListHeader[] = L"HashCheckPathListV1";
+
+	if (!pszPathListFile || !*pszPathListFile)
+		return(NULL);
+
+	HANDLE hFile = CreateFileW(
+		pszPathListFile,
+		GENERIC_READ,
+		FILE_SHARE_READ,
+		NULL,
+		OPEN_EXISTING,
+		FILE_ATTRIBUTE_NORMAL,
+		NULL
+	);
+
+	if (hFile == INVALID_HANDLE_VALUE)
+		return(NULL);
+
+	LARGE_INTEGER cbFile;
+	BOOL bReadOk = GetFileSizeEx(hFile, &cbFile) &&
+	               cbFile.HighPart == 0 &&
+	               cbFile.LowPart >= sizeof(szPathListHeader) &&
+	               (cbFile.LowPart % sizeof(WCHAR)) == 0;
+
+	PWSTR pszBuffer = NULL;
+	DWORD cbRead = 0;
+	if (bReadOk)
+	{
+		pszBuffer = (PWSTR)malloc(cbFile.LowPart + sizeof(WCHAR));
+		bReadOk = pszBuffer &&
+		          ReadFile(hFile, pszBuffer, cbFile.LowPart, &cbRead, NULL) &&
+		          cbRead == cbFile.LowPart;
+	}
+
+	CloseHandle(hFile);
+	DeleteFileW(pszPathListFile);
+
+	HSIMPLELIST hListRaw = NULL;
+	if (bReadOk)
+	{
+		UINT cchBuffer = cbRead / sizeof(WCHAR);
+		pszBuffer[cchBuffer] = 0;
+
+		PWSTR pszPath = pszBuffer;
+		if (StrCmpW(pszPath, szPathListHeader) == 0)
+		{
+			pszPath += countof(szPathListHeader);
+			hListRaw = SLCreate();
+
+			while (hListRaw && *pszPath)
+			{
+				if (!SLAddStringI(hListRaw, pszPath))
+				{
+					SLRelease(hListRaw);
+					hListRaw = NULL;
+					break;
+				}
+
+				pszPath += lstrlenW(pszPath) + 1;
+			}
+
+			if (hListRaw && !SLCheck(hListRaw))
+			{
+				SLRelease(hListRaw);
+				hListRaw = NULL;
+			}
+		}
+	}
+
+	free(pszBuffer);
+	return(hListRaw);
+}
+
+PHASHSAVECONTEXT WINAPI HashSaveCreateContext( HWND hWndOwner, HSIMPLELIST hListRaw )
+{
 	PHASHSAVECONTEXT phsctx = (PHASHSAVECONTEXT)SLSetContextSize(hListRaw, sizeof(HASHSAVECONTEXT));
 
 	if (phsctx)
 	{
-		HANDLE hThread;
-
 		phsctx->hWnd = hWndOwner;
 		phsctx->hListRaw = hListRaw;
+		phsctx->dwFlags = 0;
 		phsctx->dwReadBufferSize = GetReadBufferSizeForPath(NULL);
 		phsctx->bOuterMultithreaded = FALSE;
+		phsctx->hFileOut = INVALID_HANDLE_VALUE;
 
 		InterlockedIncrement(&g_cRefThisDll);
 		SLAddRef(hListRaw);
-
-		if (hThread = CreateThreadCRT(HashSaveThread, phsctx))
-		{
-			CloseHandle(hThread);
-			return;
-		}
-
-		// If the thread creation was successful, the thread will be
-		// responsible for decrementing the ref count
-		SLRelease(hListRaw);
-		InterlockedDecrement(&g_cRefThisDll);
+		// Balance the asynchronous UI/work lifetime against COM server
+		// shutdown in hosts that honor the server-process lock count.
+		CoAddRefServerProcess();
 	}
+
+	return(phsctx);
+}
+
+VOID WINAPI HashSaveReleaseContext( PHASHSAVECONTEXT phsctx )
+{
+	HSIMPLELIST hListRaw = phsctx->hListRaw;
+
+	SLRelease(hListRaw);
+	InterlockedDecrement(&g_cRefThisDll);
+	CoReleaseServerProcess();
+}
+
+BOOL WINAPI HashSaveStartThread( PHASHSAVECONTEXT phsctx )
+{
+	HANDLE hThread = CreateThreadCRT(HashSaveThread, phsctx);
+
+	if (hThread)
+	{
+		CloseHandle(hThread);
+		return(TRUE);
+	}
+
+	return(FALSE);
 }
 
 DWORD WINAPI HashSaveThread( PHASHSAVECONTEXT phsctx )
 {
+	HRESULT hrCoInit = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+	BOOL bCoUninitialize = SUCCEEDED(hrCoInit);
+
 	// First, activate our manifest and AddRef our host
 	ULONG_PTR uActCtxCookie = ActivateManifest(TRUE);
 	ULONG_PTR uHostCookie = HostAddRef();
@@ -142,6 +266,9 @@ DWORD WINAPI HashSaveThread( PHASHSAVECONTEXT phsctx )
 	HostRelease(uHostCookie);
 
 	InterlockedDecrement(&g_cRefThisDll);
+	CoReleaseServerProcess();
+	if (bCoUninitialize)
+		CoUninitialize();
 	return(0);
 }
 

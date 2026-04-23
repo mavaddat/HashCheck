@@ -2,11 +2,17 @@
 
 !include MUI2.nsh
 !include x64.nsh
+!include LogicLib.nsh
+!include FileFunc.nsh
+
+!insertmacro GetParameters
+!insertmacro GetOptions
 
 Unicode true
 
 Name "HashCheck"
 OutFile "HashCheckSetup-v2.6.0.0.exe"
+ShowInstDetails show
 
 RequestExecutionLevel admin
 ManifestSupportedOS all
@@ -83,31 +89,237 @@ VIAddVersionKey /LANG=${LANG_ENGLISH} "FileVersion" "2.6.0.0"
 ;
 !insertmacro MUI_RESERVEFILE_LANGDLL
 
+Var LogPath
+Var LogHandle
+Var LogMessage
+Var LastStep
+Var LastCode
+
+!macro LogLine Text
+    Push "${Text}"
+    Call log_line
+!macroend
+
+!macro SetStep Text
+    StrCpy $LastStep "${Text}"
+    !insertmacro LogLine "${Text}"
+!macroend
+
+!macro AbortIfErrors Text
+    IfErrors 0 +3
+        StrCpy $LastStep "${Text}"
+        Goto abort_on_error
+!macroend
+
+!macro AbortIfExitCode Text
+    ${If} $LastCode != 0
+        StrCpy $LastStep "${Text}"
+        Goto abort_on_error
+    ${EndIf}
+!macroend
+
+Function init_log
+    StrCpy $LogPath "$TEMP\HashCheckSetup.log"
+
+    ${GetParameters} $R0
+    ClearErrors
+    ${GetOptions} $R0 "/LOG=" $R1
+    ${IfNot} ${Errors}
+        StrCpy $LogPath "$R1"
+    ${EndIf}
+
+    ClearErrors
+    FileOpen $LogHandle "$LogPath" w
+    IfErrors init_log_done
+    FileWrite $LogHandle "HashCheck setup log$\r$\n"
+    FileWrite $LogHandle "Command line: $CMDLINE$\r$\n"
+    FileClose $LogHandle
+
+init_log_done:
+FunctionEnd
+
+Function log_line
+    Exch $LogMessage
+    DetailPrint "$LogMessage"
+
+    ClearErrors
+    FileOpen $LogHandle "$LogPath" a
+    IfErrors log_line_done
+    FileSeek $LogHandle 0 END
+    FileWrite $LogHandle "$LogMessage$\r$\n"
+    FileClose $LogHandle
+
+log_line_done:
+    Pop $LogMessage
+FunctionEnd
+
+Function register_sparse_package
+    !insertmacro SetStep "Registering Windows 11 sparse package"
+
+    StrCpy $1 "$TEMP\HashCheckWin11Install.ps1"
+    Delete "$1"
+
+    ClearErrors
+    FileOpen $LogHandle "$1" w
+    IfErrors register_sparse_prepare_failed
+    FileWrite $LogHandle "param([string]$$PackagePath, [string]$$ExternalLocation, [string]$$PackageName, [string]$$LogPath)$\r$\n"
+    FileWrite $LogHandle "$$ErrorActionPreference = 'Stop'$\r$\n"
+    FileWrite $LogHandle "function Log([string]$$Message) { Add-Content -LiteralPath $$LogPath -Encoding UTF8 -Value $$Message }$\r$\n"
+    FileWrite $LogHandle "try {$\r$\n"
+    FileWrite $LogHandle "    Log ('PowerShell version: ' + $$PSVersionTable.PSVersion)$\r$\n"
+    FileWrite $LogHandle "    Log ('OS version: ' + [Environment]::OSVersion.Version)$\r$\n"
+    FileWrite $LogHandle "    Log ('Package path: ' + $$PackagePath)$\r$\n"
+    FileWrite $LogHandle "    Log ('External location: ' + $$ExternalLocation)$\r$\n"
+    FileWrite $LogHandle "    if ([Environment]::OSVersion.Version -lt [Version]'10.0.22000.0') { Log 'Skipping sparse package registration on pre-Windows 11'; exit 0 }$\r$\n"
+    FileWrite $LogHandle "    if (!(Test-Path -LiteralPath $$PackagePath -PathType Leaf)) { throw ('MSIX package not found: ' + $$PackagePath) }$\r$\n"
+    FileWrite $LogHandle "    if (!(Test-Path -LiteralPath $$ExternalLocation -PathType Container)) { throw ('External location not found: ' + $$ExternalLocation) }$\r$\n"
+    FileWrite $LogHandle "    $$signature = Get-AuthenticodeSignature -LiteralPath $$PackagePath$\r$\n"
+    FileWrite $LogHandle "    Log ('MSIX signature status: ' + $$signature.Status + ' - ' + $$signature.StatusMessage)$\r$\n"
+    FileWrite $LogHandle "    if ($$signature.Status -ne 'Valid') { throw ('MSIX signature is not valid: ' + $$signature.Status + ' - ' + $$signature.StatusMessage) }$\r$\n"
+    FileWrite $LogHandle "    $$existing = Get-AppxPackage -Name $$PackageName -ErrorAction SilentlyContinue$\r$\n"
+    FileWrite $LogHandle "    foreach ($$package in $$existing) { Log ('Removing existing package: ' + $$package.PackageFullName); Remove-AppxPackage -Package $$package.PackageFullName -ErrorAction Stop }$\r$\n"
+    FileWrite $LogHandle "    Log 'Calling Add-AppxPackage with ExternalLocation'$\r$\n"
+    FileWrite $LogHandle "    Add-AppxPackage -Path $$PackagePath -ExternalLocation $$ExternalLocation -ForceUpdateFromAnyVersion -ErrorAction Stop$\r$\n"
+    FileWrite $LogHandle "    $$installed = Get-AppxPackage -Name $$PackageName -ErrorAction SilentlyContinue$\r$\n"
+    FileWrite $LogHandle "    if (!$$installed) { throw ('Add-AppxPackage completed but Get-AppxPackage did not find ' + $$PackageName) }$\r$\n"
+    FileWrite $LogHandle "    Log ('Installed package: ' + $$installed.PackageFullName)$\r$\n"
+    FileWrite $LogHandle "    Log ('Installed package location: ' + $$installed.InstallLocation)$\r$\n"
+    FileWrite $LogHandle "    try {$\r$\n"
+    FileWrite $LogHandle "        Log 'Staging and provisioning sparse package for machine-wide install'$\r$\n"
+    FileWrite $LogHandle "        Add-AppxPackage -Stage $$PackagePath -ExternalLocation $$ExternalLocation -ErrorAction Stop$\r$\n"
+    FileWrite $LogHandle "        Add-AppxProvisionedPackage -Online -PackagePath $$PackagePath -SkipLicense -ErrorAction Stop | Out-Null$\r$\n"
+    FileWrite $LogHandle "        Log 'Sparse package provisioning completed'$\r$\n"
+    FileWrite $LogHandle "    } catch {$\r$\n"
+    FileWrite $LogHandle "        Log ('Sparse package provisioning warning: ' + $$_.Exception.Message)$\r$\n"
+    FileWrite $LogHandle "    }$\r$\n"
+    FileWrite $LogHandle "    exit 0$\r$\n"
+    FileWrite $LogHandle "} catch {$\r$\n"
+    FileWrite $LogHandle "    Log ('ERROR installing Windows 11 sparse package: ' + $$_.Exception.Message)$\r$\n"
+    FileWrite $LogHandle "    if ($$_.InvocationInfo) { Log ('At: ' + $$_.InvocationInfo.PositionMessage) }$\r$\n"
+    FileWrite $LogHandle "    exit 1$\r$\n"
+    FileWrite $LogHandle "}$\r$\n"
+    FileClose $LogHandle
+
+    ClearErrors
+    ; nsExec starts console-subsystem tools hidden from creation time. PowerShell's
+    ; own -WindowStyle Hidden is not early enough to prevent a brief console flash.
+    nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "$1" -PackagePath "$PROGRAMFILES64\HashCheck\HashCheckWin11.msix" -ExternalLocation "$PROGRAMFILES64\HashCheck" -PackageName "IDRIX.HashCheck" -LogPath "$LogPath"'
+    Pop $LastCode
+    !insertmacro LogLine "Sparse package registration exit code: $LastCode"
+    Delete "$1"
+    Return
+
+register_sparse_prepare_failed:
+    StrCpy $LastCode 1
+    SetErrors
+    !insertmacro LogLine "ERROR: Unable to create temporary sparse package registration script"
+    Return
+FunctionEnd
+
 ; The install script
 ;
 Section
 
     GetTempFileName $0
+    !insertmacro LogLine "Log file: $LogPath"
 
     ${If} ${RunningX64}
         ${DisableX64FSRedirection}
 
         ; Install the 64-bit dll
+        !insertmacro SetStep "Extracting 64-bit HashCheck.dll"
+        ClearErrors
         File /oname=$0 ..\Bin\x64\Release\HashCheck.dll
-        ExecWait 'regsvr32 /i /n /s "$0"'
-        IfErrors abort_on_error
+        !insertmacro AbortIfErrors "Extracting 64-bit HashCheck.dll"
+
+        !insertmacro SetStep "Registering 64-bit shell extension"
+        ClearErrors
+        ExecWait 'regsvr32 /i /n /s "$0"' $LastCode
+        !insertmacro LogLine "64-bit regsvr32 exit code: $LastCode"
+        !insertmacro AbortIfErrors "Launching 64-bit regsvr32"
+        !insertmacro AbortIfExitCode "Registering 64-bit shell extension"
         Delete $0
 
         ; Install the 64-bit TBB runtime beside the shell extension DLL.
         Delete /REBOOTOK "$SYSDIR\ShellExt\tbb12.dll"
         ClearErrors
+        !insertmacro SetStep "Creating $PROGRAMFILES64\HashCheck"
         SetOutPath "$PROGRAMFILES64\HashCheck"
-        File /oname=tbb12.dll ..\Bin\x64\Release\tbb12.dll
-        IfErrors abort_on_error
+        !insertmacro AbortIfErrors "Creating $PROGRAMFILES64\HashCheck"
+
+        !insertmacro SetStep "Extracting 64-bit TBB runtime"
+        Delete "$PROGRAMFILES64\HashCheck\tbb12.dll.new"
+        ClearErrors
+        File /oname=tbb12.dll.new ..\Bin\x64\Release\tbb12.dll
+        !insertmacro AbortIfErrors "Extracting 64-bit TBB runtime"
+
+        !insertmacro SetStep "Installing 64-bit TBB runtime"
+        Delete "$PROGRAMFILES64\HashCheck\tbb12.dll"
+        ClearErrors
+        Rename "$PROGRAMFILES64\HashCheck\tbb12.dll.new" "$PROGRAMFILES64\HashCheck\tbb12.dll"
+        ${If} ${Errors}
+            !insertmacro LogLine "Direct TBB runtime replacement failed; scheduling replacement on reboot"
+            Delete /REBOOTOK "$PROGRAMFILES64\HashCheck\tbb12.dll"
+            ClearErrors
+            Rename /REBOOTOK "$PROGRAMFILES64\HashCheck\tbb12.dll.new" "$PROGRAMFILES64\HashCheck\tbb12.dll"
+            !insertmacro AbortIfErrors "Scheduling 64-bit TBB runtime replacement"
+            SetRebootFlag true
+        ${EndIf}
+
+        !insertmacro SetStep "Extracting TBB runtime license"
+        ClearErrors
         File /oname=tbb12-LICENSE.txt ..\libs\oneTBB\LICENSE.txt
-        IfErrors abort_on_error
+        !insertmacro AbortIfErrors "Extracting TBB runtime license"
+
+        ; The MSIX sparse package declares HashCheckPackageHost.exe as its
+        ; Application/Executable. That file must exist in the package's
+        ; external install location for Windows 11 to consider the Application
+        ; identity complete, and the IExplorerCommand handler launches it to
+        ; run long-lived HashCheck UI outside the COM surrogate.
+        !insertmacro SetStep "Extracting packaged app host"
+        ClearErrors
+        File /nonfatal ..\Bin\x64\Release\HashCheckPackageHost.exe
+        ${If} ${Errors}
+            !insertmacro LogLine "WARNING: HashCheckPackageHost.exe was not embedded; Win11 context menu integration may be incomplete"
+            ClearErrors
+        ${EndIf}
+
+        ; Windows 11 uses the sparse package app identity, not
+        ; IExplorerCommand::GetIcon, for the grouped flyout icon. The app
+        ; visual resources must therefore exist in the package's external
+        ; location beside HashCheckPackageHost.exe.
+        !insertmacro SetStep "Extracting Windows 11 package visual assets"
+        ClearErrors
+        File /r HashCheckWin11Package\Assets
+        !insertmacro AbortIfErrors "Extracting Windows 11 package visual assets"
+
+        !insertmacro SetStep "Extracting Windows 11 package resource index"
+        ClearErrors
+        File /nonfatal HashCheckWin11Package\resources*.pri
+        ${If} ${Errors}
+            !insertmacro LogLine "WARNING: Windows 11 package resource index was not embedded; Win11 grouped menu icon may be missing"
+            ClearErrors
+        ${EndIf}
+
+        !insertmacro SetStep "Extracting Windows 11 sparse package"
+        ClearErrors
+        File /nonfatal /oname=HashCheckWin11.msix ..\Bin\HashCheckWin11.msix
+        ${If} ${Errors}
+            !insertmacro LogLine "Windows 11 sparse package was not embedded in this installer"
+        ${EndIf}
+        ClearErrors
+
+        ; Register the sparse identity package used by the Windows 11 context menu.
+        ; Downlevel Windows builds keep the legacy shell extension path.
+        IfFileExists "$PROGRAMFILES64\HashCheck\HashCheckWin11.msix" do_register_sparse_package skip_sparse_package
+        do_register_sparse_package:
+        Call register_sparse_package
+        !insertmacro AbortIfErrors "Preparing Windows 11 sparse package registration"
+        !insertmacro AbortIfExitCode "Registering Windows 11 sparse package"
+        skip_sparse_package:
 
         ; Clean up the old System32 install location used by earlier releases.
+        !insertmacro SetStep "Cleaning up old 64-bit install location"
         Delete /REBOOTOK $SYSDIR\ShellExt\HashCheck.dll
 
         ; One of these 64-bit dlls exists and is undeletable if and
@@ -126,19 +338,37 @@ Section
         ${EnableX64FSRedirection}
 
         ; Install the 32-bit dll (the 64-bit dll handles uninstallation for both)
+        !insertmacro SetStep "Extracting 32-bit HashCheck.dll"
+        ClearErrors
         File /oname=$0 ..\Bin\Win32\Release\HashCheck.dll
-        ExecWait 'regsvr32 /i:"NoUninstall" /n /s "$0"'
-        IfErrors abort_on_error
+        !insertmacro AbortIfErrors "Extracting 32-bit HashCheck.dll"
+
+        !insertmacro SetStep "Registering 32-bit shell extension"
+        ClearErrors
+        ExecWait 'regsvr32 /i:"NoUninstall" /n /s "$0"' $LastCode
+        !insertmacro LogLine "32-bit regsvr32 exit code: $LastCode"
+        !insertmacro AbortIfErrors "Launching 32-bit regsvr32"
+        !insertmacro AbortIfExitCode "Registering 32-bit shell extension"
 
         ; Clean up the old SysWOW64 install location used by earlier releases.
+        !insertmacro SetStep "Cleaning up old 32-bit install location"
         Delete /REBOOTOK $SYSDIR\ShellExt\HashCheck.dll
     ${Else}
         ; Install the 32-bit dll
+        !insertmacro SetStep "Extracting 32-bit HashCheck.dll"
+        ClearErrors
         File /oname=$0 ..\Bin\Win32\Release\HashCheck.dll
-        ExecWait 'regsvr32 /i /n /s "$0"'
-        IfErrors abort_on_error	
+        !insertmacro AbortIfErrors "Extracting 32-bit HashCheck.dll"
+
+        !insertmacro SetStep "Registering 32-bit shell extension"
+        ClearErrors
+        ExecWait 'regsvr32 /i /n /s "$0"' $LastCode
+        !insertmacro LogLine "32-bit regsvr32 exit code: $LastCode"
+        !insertmacro AbortIfErrors "Launching 32-bit regsvr32"
+        !insertmacro AbortIfExitCode "Registering 32-bit shell extension"
 
         ; Clean up the old System32 install location used by earlier releases.
+        !insertmacro SetStep "Cleaning up old 32-bit install location"
         Delete /REBOOTOK $SYSDIR\ShellExt\HashCheck.dll
     ${EndIf}
 
@@ -157,16 +387,24 @@ Section
     Delete /REBOOTOK $SYSDIR\ShellExt\HashCheck.dll.8
     Delete /REBOOTOK $SYSDIR\ShellExt\HashCheck.dll.9
 
+    IfRebootFlag 0 no_reboot_required
+        !insertmacro LogLine "A reboot is required to complete installation"
+        IfSilent no_reboot_required
+        MessageBox MB_ICONINFORMATION|MB_OK "A reboot is required to complete installation and use the newly installed HashCheck components."
+
+    no_reboot_required:
     Return
 
     abort_on_error:
+        !insertmacro LogLine "ERROR: $LastStep"
         Delete $0
         IfSilent +2
-        MessageBox MB_ICONSTOP|MB_OK "An unexpected error occurred during installation"
+        MessageBox MB_ICONSTOP|MB_OK "An unexpected error occurred during installation.$\r$\n$\r$\nFailed step: $LastStep$\r$\nLog file: $LogPath"
         Quit
 
 SectionEnd
 
 Function .onInit
+    Call init_log
     !insertmacro MUI_LANGDLL_DISPLAY
 FunctionEnd

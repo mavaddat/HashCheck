@@ -132,6 +132,18 @@ if found_version_key_product != 1:
 if found_version_key_file    != 1:
     warn('found {} FileVersion VIAddVersionKeys defines in HashCheck.nsi'.format(found_version_key_file))
 
+# Update the sparse identity package version.
+found_identity_version = 0
+with overwrite(r'installer\HashCheckWin11Package\AppxManifest.xml', encoding='utf-8', newline='') as out_file:
+    with open(r'installer\HashCheckWin11Package\AppxManifest.xml.orig', encoding='utf-8', newline='') as in_file:
+        for line in in_file:
+            (line, subs) = re.subn(r'(\s+Version=")[\d.]+"',
+                                     r'\g<1>' + '.'.join((major, minor, patch, build)) + '"', line)
+            found_identity_version += subs
+            out_file.write(line)
+if found_identity_version != 1:
+    warn('found {} Identity Version attributes in AppxManifest.xml'.format(found_identity_version))
+
 # Lastly, update the one version line in appveyor
 found_version = 0
 with overwrite('appveyor.yml', encoding='utf-8', newline='') as out_file:

@@ -11,6 +11,7 @@
 
 #include "globals.h"
 #include "CHashCheck.hpp"
+#include "CHashCheckExplorerCommand.hpp"
 #include "CHashCheckClassFactory.hpp"
 #include "RegHelpers.h"
 #include "libs/WinHash.h"
@@ -40,6 +41,7 @@ HRESULT Install( BOOL, BOOL );
 HRESULT Uninstall( );
 BOOL WINAPI InstallFile( LPCTSTR, LPTSTR, LPTSTR );
 BOOL WINAPI GetProgramFilesDirectory( LPTSTR, UINT );
+VOID WINAPI UnregisterSparsePackage( );
 #ifdef _WIN64
 BOOL WINAPI Uninstall32BitDll( LPCTSTR );
 #endif
@@ -107,17 +109,31 @@ STDAPI DllGetClassObject( REFCLSID rclsid, REFIID riid, LPVOID *ppv )
 {
 	*ppv = NULL;
 
+	HASHCHECK_CLASS_OBJECT classObject;
+
 	if (IsEqualIID(rclsid, CLSID_HashCheck))
 	{
-		LPCHASHCHECKCLASSFACTORY lpHashCheckClassFactory = new(std::nothrow) CHashCheckClassFactory;
-		if (lpHashCheckClassFactory == NULL) return(E_OUTOFMEMORY);
-
-		HRESULT hr = lpHashCheckClassFactory->QueryInterface(riid, ppv);
-		lpHashCheckClassFactory->Release();
-		return(hr);
+		classObject = HCCO_LEGACY;
+	}
+	else if (IsEqualIID(rclsid, CLSID_HashCheckExplorerCreate))
+	{
+		classObject = HCCO_EXPLORER_CREATE;
+	}
+	else if (IsEqualIID(rclsid, CLSID_HashCheckExplorerVerify))
+	{
+		classObject = HCCO_EXPLORER_VERIFY;
+	}
+	else
+	{
+		return(CLASS_E_CLASSNOTAVAILABLE);
 	}
 
-	return(CLASS_E_CLASSNOTAVAILABLE);
+	LPCHASHCHECKCLASSFACTORY lpHashCheckClassFactory = new(std::nothrow) CHashCheckClassFactory(classObject);
+	if (lpHashCheckClassFactory == NULL) return(E_OUTOFMEMORY);
+
+	HRESULT hr = lpHashCheckClassFactory->QueryInterface(riid, ppv);
+	lpHashCheckClassFactory->Release();
+	return(hr);
 }
 
 STDAPI DllRegisterServerEx( LPCTSTR lpszModuleName )
@@ -373,7 +389,7 @@ HRESULT Install( BOOL bRegisterUninstaller, BOOL bCopyFile )
 			if (bRegisterUninstaller && (hKey = RegOpen(HKEY_LOCAL_MACHINE, TEXT("Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\%s"), CLSNAME_STR_HashCheck, TRUE)))
 			{
 				TCHAR szUninstall[MAX_PATH << 1];
-				StringCchPrintf(szUninstall, countof(szUninstall), TEXT("regsvr32.exe /u /i /n \"%s\""), lpszTargetPath);
+				StringCchPrintf(szUninstall, countof(szUninstall), TEXT("regsvr32.exe /u /i /n /s \"%s\""), lpszTargetPath);
 
 				static const TCHAR szURLFull[] = TEXT("https://github.com/idrassi/HashCheck/issues");
 				TCHAR szURLBase[countof(szURLFull)];
@@ -413,6 +429,8 @@ HRESULT Uninstall( )
 	LPTSTR lpszTempAppend = szTemp + GetModuleFileName(g_hModThisDll, szTemp, countof(szTemp));
 
     StringCbCopy(szCurrentDllPath, sizeof(szCurrentDllPath), szTemp);
+
+	UnregisterSparsePackage();
 
 #ifdef _WIN64
 	{
@@ -484,6 +502,21 @@ HRESULT Uninstall( )
 				TEXT("tbb12-LICENSE.txt")
 			);
 			DeleteFile(szTbbPath);
+
+			StringCbCopy(
+				pszFileName + 1,
+				sizeof(szTbbPath) - BYTEDIFF(pszFileName + 1, szTbbPath),
+				PACKAGE_FILE_STR_HashCheck
+			);
+			DeleteFile(szTbbPath);
+
+			StringCbCopy(
+				pszFileName + 1,
+				sizeof(szTbbPath) - BYTEDIFF(pszFileName + 1, szTbbPath),
+				TEXT("HashCheckPackageHost.exe")
+			);
+			if (!DeleteFile(szTbbPath))
+				MoveFileEx(szTbbPath, NULL, MOVEFILE_DELAY_UNTIL_REBOOT);
 		}
 	}
 #endif
@@ -510,6 +543,54 @@ HRESULT Uninstall( )
 	RegDelete(HKEY_LOCAL_MACHINE, TEXT("Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\%s"), CLSNAME_STR_HashCheck);
 
 	return(hr);
+}
+
+VOID WINAPI UnregisterSparsePackage( )
+{
+	if (g_uWinVer < 0x0A00)
+		return;
+
+	TCHAR szPowerShell[MAX_PATH + 0x20];
+	UINT uSize = GetSystemDirectory(szPowerShell, MAX_PATH);
+	if (!uSize || uSize >= MAX_PATH)
+		return;
+
+	if (FAILED(StringCchCat(szPowerShell, countof(szPowerShell), TEXT("\\WindowsPowerShell\\v1.0\\powershell.exe"))))
+		return;
+
+	static const TCHAR szScript[] =
+		TEXT("if (Get-Command Get-AppxPackage -ErrorAction SilentlyContinue) { ")
+		TEXT("$name = '") PACKAGE_NAME_STR_HashCheck TEXT("'; ")
+		TEXT("$packages = Get-AppxPackage -AllUsers -Name $name -ErrorAction SilentlyContinue; ")
+		TEXT("$provisioned = Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -eq $name }; ")
+		TEXT("foreach ($p in $provisioned) { Remove-AppxProvisionedPackage -Online -PackageName $p.PackageName -ErrorAction SilentlyContinue | Out-Null }; ")
+		TEXT("foreach ($p in $packages) { Remove-AppxPackage -Package $p.PackageFullName -AllUsers -ErrorAction SilentlyContinue } ")
+		TEXT("}");
+
+	TCHAR szCommandLine[4096];
+	if (FAILED(StringCchPrintf(
+		szCommandLine,
+		countof(szCommandLine),
+		TEXT("\"%s\" -NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -Command \"%s\""),
+		szPowerShell,
+		szScript)))
+	{
+		return;
+	}
+
+	STARTUPINFO si;
+	memset(&si, 0, sizeof(si));
+	si.cb = sizeof(si);
+
+	PROCESS_INFORMATION pi;
+	memset(&pi, 0, sizeof(pi));
+
+	if (CreateProcess(szPowerShell, szCommandLine, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi))
+	{
+		WaitForSingleObject(pi.hProcess, INFINITE);
+		CloseHandle(pi.hThread);
+		CloseHandle(pi.hProcess);
+	}
 }
 
 #ifdef _WIN64

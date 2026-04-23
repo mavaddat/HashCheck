@@ -11,13 +11,20 @@
 
 #include "globals.h"
 
+enum HASHCHECK_CLASS_OBJECT {
+	HCCO_LEGACY = 0,
+	HCCO_EXPLORER_CREATE,
+	HCCO_EXPLORER_VERIFY
+};
+
 class CHashCheckClassFactory : public IClassFactory
 {
 	protected:
 		CREF m_cRef;
+		HASHCHECK_CLASS_OBJECT m_classObject;
 
 	public:
-		CHashCheckClassFactory( ) { InterlockedIncrement(&g_cRefThisDll); m_cRef = 1; }
+		CHashCheckClassFactory( HASHCHECK_CLASS_OBJECT classObject = HCCO_LEGACY ) { InterlockedIncrement(&g_cRefThisDll); m_cRef = 1; m_classObject = classObject; }
 		~CHashCheckClassFactory( ) { InterlockedDecrement(&g_cRefThisDll); }
 
 		// IUnknown members

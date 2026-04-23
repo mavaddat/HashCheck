@@ -41,9 +41,15 @@ extern UINT16 g_uWinVer;
 
 // Define the data and strings used for COM registration
 static const GUID CLSID_HashCheck = { 0x705977c7, 0x86cb, 0x4743, { 0xbf, 0xaf, 0x69, 0x08, 0xbd, 0x19, 0xb7, 0xb0 } };
+static const GUID CLSID_HashCheckExplorerCreate = { 0xdb56d393, 0xfc0e, 0x4f46, { 0x9c, 0x82, 0xec, 0x60, 0x1e, 0x6a, 0xb6, 0xaa } };
+static const GUID CLSID_HashCheckExplorerVerify = { 0xd07a4f30, 0xd6f6, 0x4e0b, { 0x93, 0x61, 0xe3, 0x03, 0x9e, 0xdb, 0x15, 0xff } };
 #define CLSID_STR_HashCheck         TEXT("{705977C7-86CB-4743-BFAF-6908BD19B7B0}")
+#define CLSID_STR_HashCheckExplorerCreate TEXT("{DB56D393-FC0E-4F46-9C82-EC601E6AB6AA}")
+#define CLSID_STR_HashCheckExplorerVerify TEXT("{D07A4F30-D6F6-4E0B-9361-E3039EDB15FF}")
 #define CLSNAME_STR_HashCheck       TEXT("HashCheck Shell Extension")
 #define PROGID_STR_HashCheck        TEXT("HashCheck")
+#define PACKAGE_NAME_STR_HashCheck  TEXT("IDRIX.HashCheck")
+#define PACKAGE_FILE_STR_HashCheck  TEXT("HashCheckWin11.msix")
 
 // Application ID for the NT6.1+ taskbar
 #define APP_USER_MODEL_ID           L"KL.HashCheck"

@@ -165,6 +165,7 @@ VOID CALLBACK HashVerify_RunDLLW( HWND hWnd, HINSTANCE hInstance,
 		if (WStrToTStr(pszCmdLine, pszPath, (UINT)cchPath))
 		{
 			++g_cRefThisDll;
+			CoAddRefServerProcess();
 			HashVerifyThread(pszPath);
 		}
 		else
@@ -176,6 +177,9 @@ VOID CALLBACK HashVerify_RunDLLW( HWND hWnd, HINSTANCE hInstance,
 
 DWORD WINAPI HashVerifyThread( PTSTR pszPath )
 {
+	HRESULT hrCoInit = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+	BOOL bCoUninitialize = SUCCEEDED(hrCoInit);
+
 	// We will need to free the memory allocated for the data when done
 	PBYTE pbRawData;
 
@@ -233,6 +237,9 @@ DWORD WINAPI HashVerifyThread( PTSTR pszPath )
 	HostRelease(uHostCookie);
 
 	InterlockedDecrement(&g_cRefThisDll);
+	CoReleaseServerProcess();
+	if (bCoUninitialize)
+		CoUninitialize();
 	return(0);
 }
 

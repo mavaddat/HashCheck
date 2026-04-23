@@ -8,6 +8,7 @@
 
 #include "CHashCheckClassFactory.hpp"
 #include "CHashCheck.hpp"
+#include "CHashCheckExplorerCommand.hpp"
 #include <new>
 
 STDMETHODIMP CHashCheckClassFactory::QueryInterface( REFIID riid, LPVOID *ppv )
@@ -36,10 +37,26 @@ STDMETHODIMP CHashCheckClassFactory::CreateInstance( LPUNKNOWN pUnkOuter, REFIID
 
 	if (pUnkOuter) return(CLASS_E_NOAGGREGATION);
 
-	LPCHASHCHECK lpHashCheck = new(std::nothrow) CHashCheck;
-	if (lpHashCheck == NULL) return(E_OUTOFMEMORY);
+	IUnknown *pUnknown = NULL;
 
-	HRESULT hr = lpHashCheck->QueryInterface(riid, ppv);
-	lpHashCheck->Release();
+	switch (m_classObject)
+	{
+		case HCCO_EXPLORER_CREATE:
+			pUnknown = static_cast<IExplorerCommand *>(new(std::nothrow) CHashCheckExplorerCommand(HCEC_CREATE));
+			break;
+
+		case HCCO_EXPLORER_VERIFY:
+			pUnknown = static_cast<IExplorerCommand *>(new(std::nothrow) CHashCheckExplorerCommand(HCEC_VERIFY));
+			break;
+
+		default:
+			pUnknown = static_cast<IShellExtInit *>(new(std::nothrow) CHashCheck);
+			break;
+	}
+
+	if (pUnknown == NULL) return(E_OUTOFMEMORY);
+
+	HRESULT hr = pUnknown->QueryInterface(riid, ppv);
+	pUnknown->Release();
 	return(hr);
 }

@@ -33,6 +33,9 @@
     <ClCompile Include="CHashCheckClassFactory.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="CHashCheckExplorerCommand.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="HashCheckCommon.c">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -131,6 +134,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="CHashCheckClassFactory.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="CHashCheckExplorerCommand.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="HashCheckUI.h">

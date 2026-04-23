@@ -216,6 +216,7 @@
   <ItemGroup>
     <ClCompile Include="CHashCheck.cpp" />
     <ClCompile Include="CHashCheckClassFactory.cpp" />
+    <ClCompile Include="CHashCheckExplorerCommand.cpp" />
     <ClCompile Include="HashCalc.c" />
     <ClCompile Include="HashCheck.cpp" />
     <ClCompile Include="HashCheckCommon.c" />
@@ -285,6 +286,7 @@
   <ItemGroup>
     <ClInclude Include="CHashCheck.hpp" />
     <ClInclude Include="CHashCheckClassFactory.hpp" />
+    <ClInclude Include="CHashCheckExplorerCommand.hpp" />
     <ClInclude Include="GetHighMSB.h" />
     <ClInclude Include="globals.h" />
     <ClInclude Include="HashCalc.h" />
