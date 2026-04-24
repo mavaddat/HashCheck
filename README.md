@@ -2,13 +2,52 @@
 
 ### Installation ###
 
-The latest installer for Windows (Vista and later) can be found here:  
+The latest installer for Windows (Vista and later) can be found here:
+
 <https://github.com/idrassi/HashCheck/releases/latest>
+
+### Creating checksum files without Explorer ###
+
+The installer places `HashCheckPackageHost.exe` beside `HashCheck.dll`. It can
+launch HashCheck checksum creation directly, without using Explorer's context
+menu:
+
+```text
+"%ProgramFiles%\HashCheck\HashCheckPackageHost.exe" /create "C:\path\to\file-or-folder" ["C:\another\path" ...]
+```
+
+Paths supplied without a command are treated as `/create`, so dragging files or
+folders onto `HashCheckPackageHost.exe` opens the normal HashCheck save dialog.
+The same launcher also supports `/verify <checksum-file>` and `/options`.
+
+To create a checksum file without showing the save/progress UI, provide an
+output path. The hash is inferred from the output extension when possible and
+falls back to SHA-256 otherwise:
+
+```text
+"%ProgramFiles%\HashCheck\HashCheckPackageHost.exe" /create /output "C:\path\checksums.sha256" "C:\path\to\folder"
+```
+
+The non-interactive mode also accepts `/hash`, `/encoding`, and `/eol`.
+Supported hash names are `crc32`, `md5`, `sha1`, `sha256`, `sha512`,
+`sha3-256`, `sha3-512`, `blake3`, `xxh3`, and `xxh128`:
+
+```text
+"%ProgramFiles%\HashCheck\HashCheckPackageHost.exe" /create /output "C:\path\checksums.blake3" /hash blake3 /encoding utf8 /eol lf "C:\path\to\folder"
+```
+
+Under Wine, run the launcher from the HashCheck install directory and pass Wine
+paths, for example:
+
+```text
+wine HashCheckPackageHost.exe /create "Z:\home\user\data"
+wine HashCheckPackageHost.exe /create /output "Z:\home\user\checksums.sha256" "Z:\home\user\data"
+```
 
 #### Contributors ####
 
-Kai Liu  
-Christopher Gurnee  
+Kai Liu
+Christopher Gurnee
 David B. Trout  
 Tim Schlueter  
 Mounir IDRASSI

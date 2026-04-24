@@ -36,6 +36,17 @@
 #define  HASHSAVEITEM     HASHCALCITEM
 #define PHASHSAVEITEM    PHASHCALCITEM
 
+#define HSF_HEADLESS       0x01000000UL
+#define HSF_WORKER_FAILED  0x02000000UL
+
+typedef struct {
+	HSIMPLELIST hListRaw;
+	PWSTR pszOutputPath;
+	UINT uHashIndex;
+	INT iSaveEncoding;
+	INT iSaveEol;
+} HASHSAVESILENTSPEC, *PHASHSAVESILENTSPEC;
+
 
 
 /*============================================================================*\
@@ -45,9 +56,12 @@
 // Entry points / main functions
 DWORD WINAPI HashSaveThread( PHASHSAVECONTEXT phsctx );
 HSIMPLELIST WINAPI HashSaveLoadPathListFile( PWSTR pszPathListFile );
+HRESULT WINAPI HashSaveLoadSilentSpecFile( PWSTR pszSpecFile, PHASHSAVESILENTSPEC pSpec );
+VOID WINAPI HashSaveFreeSilentSpec( PHASHSAVESILENTSPEC pSpec );
 PHASHSAVECONTEXT WINAPI HashSaveCreateContext( HWND hWndOwner, HSIMPLELIST hListRaw );
 VOID WINAPI HashSaveReleaseContext( PHASHSAVECONTEXT phsctx );
 BOOL WINAPI HashSaveStartThread( PHASHSAVECONTEXT phsctx );
+HRESULT WINAPI HashSaveRunSilent( HWND hWndOwner, PHASHSAVESILENTSPEC pSpec );
 
 // Worker thread
 VOID __fastcall HashSaveWorkerMain( PHASHSAVECONTEXT phsctx );
@@ -73,6 +87,19 @@ VOID CALLBACK HashSave_RunDLLW( HWND hWnd, HINSTANCE, PWSTR pszCmdLine, INT )
 
 		SLRelease(hListRaw);
 	}
+}
+
+INT CALLBACK HashSaveSilent_RunDLLW( HWND hWnd, HINSTANCE, PWSTR pszCmdLine, INT )
+{
+	HASHSAVESILENTSPEC spec;
+	ZeroMemory(&spec, sizeof(spec));
+
+	HRESULT hr = HashSaveLoadSilentSpecFile(pszCmdLine, &spec);
+	if (SUCCEEDED(hr))
+		hr = HashSaveRunSilent(hWnd, &spec);
+
+	HashSaveFreeSilentSpec(&spec);
+	return((INT)hr);
 }
 
 VOID WINAPI HashSaveStart( HWND hWndOwner, HSIMPLELIST hListRaw )
@@ -167,12 +194,184 @@ HSIMPLELIST WINAPI HashSaveLoadPathListFile( PWSTR pszPathListFile )
 	return(hListRaw);
 }
 
+HRESULT WINAPI HashSaveLoadSilentSpecFile( PWSTR pszSpecFile, PHASHSAVESILENTSPEC pSpec )
+{
+	static const WCHAR szSpecHeader[] = L"HashCheckSaveSpecV1";
+
+	if (!pSpec)
+		return(E_POINTER);
+
+	ZeroMemory(pSpec, sizeof(*pSpec));
+
+	if (!pszSpecFile || !*pszSpecFile)
+		return(E_INVALIDARG);
+
+	HANDLE hFile = CreateFileW(
+		pszSpecFile,
+		GENERIC_READ,
+		FILE_SHARE_READ,
+		NULL,
+		OPEN_EXISTING,
+		FILE_ATTRIBUTE_NORMAL,
+		NULL
+	);
+
+	if (hFile == INVALID_HANDLE_VALUE)
+		return(HRESULT_FROM_WIN32(GetLastError()));
+
+	LARGE_INTEGER cbFile;
+	BOOL bReadOk = GetFileSizeEx(hFile, &cbFile) &&
+	               cbFile.HighPart == 0 &&
+	               cbFile.LowPart >= sizeof(szSpecHeader) &&
+	               (cbFile.LowPart % sizeof(WCHAR)) == 0;
+
+	PWSTR pszBuffer = NULL;
+	DWORD cbRead = 0;
+	if (bReadOk)
+	{
+		pszBuffer = (PWSTR)malloc(cbFile.LowPart + sizeof(WCHAR));
+		bReadOk = pszBuffer &&
+		          ReadFile(hFile, pszBuffer, cbFile.LowPart, &cbRead, NULL) &&
+		          cbRead == cbFile.LowPart;
+	}
+
+	DWORD dwReadError = bReadOk ? ERROR_SUCCESS : GetLastError();
+
+	CloseHandle(hFile);
+	DeleteFileW(pszSpecFile);
+
+	HRESULT hr = bReadOk ? S_OK : HRESULT_FROM_WIN32(dwReadError ? dwReadError : ERROR_READ_FAULT);
+
+	if (SUCCEEDED(hr))
+	{
+		UINT cchBuffer = cbRead / sizeof(WCHAR);
+		pszBuffer[cchBuffer] = 0;
+
+		PWSTR pszCurrent = pszBuffer;
+		PWSTR pszEnd = pszBuffer + cchBuffer;
+		auto HasCompleteString = [pszEnd](PWSTR psz) -> BOOL
+		{
+			return(psz < pszEnd && psz + lstrlenW(psz) < pszEnd);
+		};
+
+		if (StrCmpW(pszCurrent, szSpecHeader) != 0)
+		{
+			hr = E_INVALIDARG;
+		}
+		else
+		{
+			pszCurrent += countof(szSpecHeader);
+
+			if (!HasCompleteString(pszCurrent) || !*pszCurrent)
+				hr = E_INVALIDARG;
+		}
+
+		if (SUCCEEDED(hr))
+		{
+			size_t cchOutputPath = lstrlenW(pszCurrent) + 1;
+			pSpec->pszOutputPath = (PWSTR)malloc(cchOutputPath * sizeof(WCHAR));
+			if (!pSpec->pszOutputPath)
+			{
+				hr = E_OUTOFMEMORY;
+			}
+			else
+			{
+				StringCchCopyW(pSpec->pszOutputPath, cchOutputPath, pszCurrent);
+				pszCurrent += cchOutputPath;
+			}
+		}
+
+		if (SUCCEEDED(hr) && !HasCompleteString(pszCurrent))
+			hr = E_INVALIDARG;
+
+		if (SUCCEEDED(hr))
+		{
+			pSpec->uHashIndex = (UINT)StrToIntW(pszCurrent);
+			pszCurrent += lstrlenW(pszCurrent) + 1;
+
+			if (!HasCompleteString(pszCurrent))
+			{
+				hr = E_INVALIDARG;
+			}
+		}
+
+		if (SUCCEEDED(hr))
+		{
+			pSpec->iSaveEncoding = StrToIntW(pszCurrent);
+			pszCurrent += lstrlenW(pszCurrent) + 1;
+
+			if (!HasCompleteString(pszCurrent))
+			{
+				hr = E_INVALIDARG;
+			}
+		}
+
+		if (SUCCEEDED(hr))
+		{
+			pSpec->iSaveEol = StrToIntW(pszCurrent);
+			pszCurrent += lstrlenW(pszCurrent) + 1;
+
+			if (!pSpec->uHashIndex || pSpec->uHashIndex > NUM_HASHES)
+				hr = E_INVALIDARG;
+		}
+
+		if (SUCCEEDED(hr))
+		{
+			pSpec->hListRaw = SLCreate();
+			if (!pSpec->hListRaw)
+			{
+				hr = E_OUTOFMEMORY;
+			}
+			else
+			{
+				while (pszCurrent < pszEnd && *pszCurrent)
+				{
+					if (!HasCompleteString(pszCurrent))
+					{
+						hr = E_INVALIDARG;
+						break;
+					}
+
+					if (!SLAddStringI(pSpec->hListRaw, pszCurrent))
+					{
+						hr = E_OUTOFMEMORY;
+						break;
+					}
+
+					pszCurrent += lstrlenW(pszCurrent) + 1;
+				}
+
+				if (SUCCEEDED(hr) && !SLCheck(pSpec->hListRaw))
+					hr = E_INVALIDARG;
+			}
+		}
+	}
+
+	free(pszBuffer);
+
+	if (FAILED(hr))
+		HashSaveFreeSilentSpec(pSpec);
+
+	return(hr);
+}
+
+VOID WINAPI HashSaveFreeSilentSpec( PHASHSAVESILENTSPEC pSpec )
+{
+	if (!pSpec)
+		return;
+
+	SLRelease(pSpec->hListRaw);
+	free(pSpec->pszOutputPath);
+	ZeroMemory(pSpec, sizeof(*pSpec));
+}
+
 PHASHSAVECONTEXT WINAPI HashSaveCreateContext( HWND hWndOwner, HSIMPLELIST hListRaw )
 {
 	PHASHSAVECONTEXT phsctx = (PHASHSAVECONTEXT)SLSetContextSize(hListRaw, sizeof(HASHSAVECONTEXT));
 
 	if (phsctx)
 	{
+		ZeroMemory(phsctx, sizeof(HASHSAVECONTEXT));
 		phsctx->hWnd = hWndOwner;
 		phsctx->hListRaw = hListRaw;
 		phsctx->dwFlags = 0;
@@ -206,6 +405,73 @@ BOOL WINAPI HashSaveStartThread( PHASHSAVECONTEXT phsctx )
 	}
 
 	return(FALSE);
+}
+
+HRESULT WINAPI HashSaveRunSilent( HWND hWndOwner, PHASHSAVESILENTSPEC pSpec )
+{
+	if (!pSpec || !pSpec->hListRaw || !pSpec->pszOutputPath)
+		return(E_INVALIDARG);
+
+	HRESULT hrCoInit = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+	BOOL bCoUninitialize = SUCCEEDED(hrCoInit);
+	if (FAILED(hrCoInit) && hrCoInit != RPC_E_CHANGED_MODE)
+		return(hrCoInit);
+
+	ULONG_PTR uActCtxCookie = ActivateManifest(TRUE);
+
+	PHASHSAVECONTEXT phsctx = HashSaveCreateContext(hWndOwner, pSpec->hListRaw);
+	if (!phsctx)
+	{
+		DeactivateManifest(uActCtxCookie);
+		if (bCoUninitialize)
+			CoUninitialize();
+		return(E_OUTOFMEMORY);
+	}
+
+	phsctx->dwFlags |= HSF_HEADLESS;
+	phsctx->status = ACTIVE;
+	phsctx->hList = NULL;
+	HashCalcPrepare(phsctx);
+
+	HCNormalizeString(pSpec->pszOutputPath);
+	StrTrimW(pSpec->pszOutputPath, L" ");
+
+	HRESULT hr = S_OK;
+	if (!HashCalcInitSaveToFile(phsctx, pSpec->pszOutputPath, pSpec->uHashIndex,
+	                            pSpec->iSaveEncoding, pSpec->iSaveEol))
+	{
+		hr = HRESULT_FROM_WIN32(GetLastError() ? GetLastError() : ERROR_CANNOT_MAKE);
+	}
+	else if (!(phsctx->hList = SLCreateEx(TRUE)))
+	{
+		hr = E_OUTOFMEMORY;
+	}
+	else
+	{
+		HashSaveWorkerMain(phsctx);
+		if (phsctx->dwFlags & HSF_WORKER_FAILED)
+			hr = HRESULT_FROM_WIN32(ERROR_OUTOFMEMORY);
+
+		SLRelease(phsctx->hList);
+		phsctx->hList = NULL;
+	}
+
+	if (phsctx->hFileOut != INVALID_HANDLE_VALUE)
+	{
+		if (FAILED(hr))
+			HashCalcDeleteFileByHandle(phsctx->hFileOut);
+
+		CloseHandle(phsctx->hFileOut);
+		phsctx->hFileOut = INVALID_HANDLE_VALUE;
+	}
+
+	HashSaveReleaseContext(phsctx);
+
+	DeactivateManifest(uActCtxCookie);
+	if (bCoUninitialize)
+		CoUninitialize();
+
+	return(hr);
 }
 
 DWORD WINAPI HashSaveThread( PHASHSAVECONTEXT phsctx )
@@ -277,13 +543,19 @@ VOID __fastcall HashSaveWorkerMain( PHASHSAVECONTEXT phsctx )
 {
 	// Note that ALL message communication to and from the main window MUST
 	// be asynchronous, or else there may be a deadlock.
+	const bool bHeadless = (phsctx->dwFlags & HSF_HEADLESS) != 0;
 
 	// Prep: expand directories, max path, etc. (prefix was set by earlier call)
-	PostMessage(phsctx->hWnd, HM_WORKERTHREAD_TOGGLEPREP, (WPARAM)phsctx, TRUE);
+	if (!bHeadless)
+		PostMessage(phsctx->hWnd, HM_WORKERTHREAD_TOGGLEPREP, (WPARAM)phsctx, TRUE);
 	if (! HashCalcPrepare(phsctx))
+	{
+		phsctx->dwFlags |= HSF_WORKER_FAILED;
         return;
+	}
     HashCalcSetSaveFormat(phsctx);
-	PostMessage(phsctx->hWnd, HM_WORKERTHREAD_TOGGLEPREP, (WPARAM)phsctx, FALSE);
+	if (!bHeadless)
+		PostMessage(phsctx->hWnd, HM_WORKERTHREAD_TOGGLEPREP, (WPARAM)phsctx, FALSE);
 
     // Extract the slist into a vector for parallel_for_each
     std::vector<PHASHSAVEITEM> vecpItems;
@@ -291,7 +563,7 @@ VOID __fastcall HashSaveWorkerMain( PHASHSAVECONTEXT phsctx )
     SLBuildIndex(phsctx->hList, (PVOID*)vecpItems.data());
     assert(vecpItems.back() == nullptr);
     vecpItems.pop_back();
-    assert(vecpItems.back() != nullptr);
+    assert(vecpItems.empty() || vecpItems.back() != nullptr);
 
     phsctx->dwReadBufferSize = GetReadBufferSizeForPath(vecpItems.empty() ? NULL : vecpItems[0]->szPath);
 
@@ -300,7 +572,10 @@ VOID __fastcall HashSaveWorkerMain( PHASHSAVECONTEXT phsctx )
     concurrency::concurrent_vector<void*> vecBuffers;  // a vector of all allocated read buffers (one per thread)
     DWORD dwBufferTlsIndex = TlsAlloc();               // TLS index of the current thread's read buffer
     if (dwBufferTlsIndex == TLS_OUT_OF_INDEXES)
+	{
+		phsctx->dwFlags |= HSF_WORKER_FAILED;
         return;
+	}
 #else
     constexpr bool bMultithreaded = false;
 #endif
@@ -311,7 +586,10 @@ VOID __fastcall HashSaveWorkerMain( PHASHSAVECONTEXT phsctx )
     {
         pbTheBuffer = (PBYTE)malloc(phsctx->dwReadBufferSize);
         if (pbTheBuffer == NULL)
+		{
+			phsctx->dwFlags |= HSF_WORKER_FAILED;
             return;
+		}
     }
 
     // Initialize the progress bar update synchronization vars
@@ -345,7 +623,10 @@ VOID __fastcall HashSaveWorkerMain( PHASHSAVECONTEXT phsctx )
             {
                 pbBuffer = (PBYTE)malloc(phsctx->dwReadBufferSize);
                 if (pbBuffer == NULL)
+				{
+					phsctx->dwFlags |= HSF_WORKER_FAILED;
                     throw CanceledException();
+				}
                 // Cache the read buffer for the current thread
                 vecBuffers.push_back(pbBuffer);
                 TlsSetValue(dwBufferTlsIndex, pbBuffer);
@@ -375,8 +656,11 @@ VOID __fastcall HashSaveWorkerMain( PHASHSAVECONTEXT phsctx )
             throw CanceledException();
 
 		// Update the UI
-		InterlockedIncrement(&phsctx->cSentMsgs);
-		PostMessage(phsctx->hWnd, HM_WORKERTHREAD_UPDATE, (WPARAM)phsctx, (LPARAM)pItem);
+		if (!bHeadless)
+		{
+			InterlockedIncrement(&phsctx->cSentMsgs);
+			PostMessage(phsctx->hWnd, HM_WORKERTHREAD_UPDATE, (WPARAM)phsctx, (LPARAM)pItem);
+		}
     };
 #pragma warning(pop)
 

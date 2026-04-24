@@ -295,11 +295,8 @@ Section
         ; run long-lived HashCheck UI outside the COM surrogate.
         !insertmacro SetStep "Extracting packaged app host"
         ClearErrors
-        File /nonfatal ..\Bin\x64\Release\HashCheckPackageHost.exe
-        ${If} ${Errors}
-            !insertmacro LogLine "WARNING: HashCheckPackageHost.exe was not embedded; Win11 context menu integration may be incomplete"
-            ClearErrors
-        ${EndIf}
+        File ..\Bin\x64\Release\HashCheckPackageHost.exe
+        !insertmacro AbortIfErrors "Extracting packaged app host"
 
         ; Windows 11 uses the sparse package app identity, not
         ; IExplorerCommand::GetIcon, for the grouped flyout icon. The app
@@ -407,6 +404,17 @@ Section
         ; Clean up the old System32 install location used by earlier releases.
         !insertmacro SetStep "Cleaning up old 32-bit install location"
         Delete /REBOOTOK $SYSDIR\ShellExt\HashCheck.dll
+
+        ; Install the launcher used for command-line checksum creation.
+        !insertmacro SetStep "Creating $PROGRAMFILES\HashCheck"
+        ClearErrors
+        SetOutPath "$PROGRAMFILES\HashCheck"
+        !insertmacro AbortIfErrors "Creating $PROGRAMFILES\HashCheck"
+
+        !insertmacro SetStep "Extracting HashCheck launcher"
+        ClearErrors
+        File ..\Bin\Win32\Release\HashCheckPackageHost.exe
+        !insertmacro AbortIfErrors "Extracting HashCheck launcher"
     ${EndIf}
 
     Delete $0

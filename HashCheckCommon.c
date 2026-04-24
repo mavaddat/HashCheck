@@ -435,6 +435,9 @@ __inline VOID UpdateProgressBar( HWND hWndPBFile, PCRITICAL_SECTION pCritSec,
                                  PBOOL pbCurrentlyUpdating, volatile ULONGLONG* pcbCurrentMaxSize,
                                  ULONGLONG cbFileSize, ULONGLONG cbFileRead, PUINT pLastProgress )
 {
+    if (!hWndPBFile)
+        return;
+
     if (pCritSec)  // if we're one among many file-hashing threads
     {
         // All the checks below outside of critical sections are innacurate; they're meant

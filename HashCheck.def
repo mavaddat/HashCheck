@@ -8,5 +8,6 @@ EXPORTS
 	DllUnregisterServer PRIVATE
 	DllInstall          PRIVATE
 	HashSave_RunDLLW    PRIVATE
+	HashSaveSilent_RunDLLW PRIVATE
 	HashVerify_RunDLLW  PRIVATE
 	ShowOptions_RunDLLW PRIVATE

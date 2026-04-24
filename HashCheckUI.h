@@ -20,6 +20,7 @@ HANDLE __fastcall CreateThreadCRT( PVOID pThreadProc, PVOID pvParam );
 // HashSave
 VOID WINAPI HashSaveStart( HWND hWndOwner, HSIMPLELIST hListInput );
 VOID CALLBACK HashSave_RunDLLW( HWND hWnd, HINSTANCE hInstance, PWSTR pszCmdLine, INT nCmdShow );
+INT CALLBACK HashSaveSilent_RunDLLW( HWND hWnd, HINSTANCE hInstance, PWSTR pszCmdLine, INT nCmdShow );
 
 // HashProp
 UINT CALLBACK HashPropCallback( HWND hWnd, UINT uMsg, LPPROPSHEETPAGE ppsp );

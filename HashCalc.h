@@ -105,6 +105,9 @@ typedef struct {
 // Public functions
 BOOL WINAPI HashCalcPrepare( PHASHCALCCONTEXT phcctx );
 VOID WINAPI HashCalcInitSave( PHASHCALCCONTEXT phcctx );
+BOOL WINAPI HashCalcInitSaveToFile( PHASHCALCCONTEXT phcctx, PTSTR pszSaveFile,
+                                    UINT uFilterIndex, INT iSaveEncoding,
+                                    INT iSaveEol );
 VOID WINAPI HashCalcSetSaveFormat( PHASHCALCCONTEXT phcctx );
 BOOL WINAPI HashCalcWriteResult( PHASHCALCCONTEXT phcctx, PHASHCALCITEM pItem );
 VOID WINAPI HashCalcClearInvalid( PWHRESULTEX pwhres, WCHAR cInvalid );

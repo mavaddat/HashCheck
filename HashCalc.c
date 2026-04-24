@@ -421,6 +421,67 @@ VOID WINAPI HashCalcInitSave( PHASHCALCCONTEXT phcctx )
 	}
 }
 
+BOOL WINAPI HashCalcInitSaveToFile( PHASHCALCCONTEXT phcctx, PTSTR pszSaveFile,
+                                    UINT uFilterIndex, INT iSaveEncoding,
+                                    INT iSaveEol )
+{
+	if (!pszSaveFile || !*pszSaveFile || !uFilterIndex || uFilterIndex > NUM_HASHES)
+		return(FALSE);
+
+	phcctx->hFileOut = INVALID_HANDLE_VALUE;
+
+	phcctx->opt.dwFlags = HCOF_SAVEENCODING | HCOF_SAVEEOL;
+	OptionsLoad(&phcctx->opt);
+
+	if (iSaveEncoding >= 0 && iSaveEncoding < 3)
+		phcctx->opt.dwSaveEncoding = (DWORD)iSaveEncoding;
+
+	if (iSaveEol >= 0 && iSaveEol < 2)
+		phcctx->opt.dwSaveEol = (DWORD)iSaveEol;
+
+	phcctx->ofn.lpstrFile = pszSaveFile;
+	phcctx->ofn.nFilterIndex = uFilterIndex;
+
+	PTSTR pszFileName = StrRChr(pszSaveFile, NULL, TEXT('\\'));
+	phcctx->ofn.nFileOffset = pszFileName ? (WORD)(pszFileName - pszSaveFile + 1) : 0;
+
+	PTSTR pszExt = StrRChr(pszSaveFile + phcctx->ofn.nFileOffset, NULL, TEXT('.'));
+	phcctx->ofn.nFileExtension = pszExt ? (WORD)(pszExt - pszSaveFile + 1) : 0;
+
+	HashCalcSetSavePrefix(phcctx, pszSaveFile);
+
+	phcctx->hFileOut = CreateFileWithLongPathRetry(
+		pszSaveFile,
+		FILE_APPEND_DATA | DELETE,
+		FILE_SHARE_READ,
+		NULL,
+		CREATE_ALWAYS,
+		FILE_ATTRIBUTE_NORMAL,
+		NULL
+	);
+
+	if (phcctx->hFileOut == INVALID_HANDLE_VALUE)
+		return(FALSE);
+
+	phcctx->szFormat[0] = 0;
+
+	if (phcctx->opt.dwSaveEncoding == 1)
+	{
+		WCHAR BOM = 0xFEFF;
+		DWORD cbWritten;
+		if (!WriteFile(phcctx->hFileOut, &BOM, sizeof(WCHAR), &cbWritten, NULL) ||
+		    cbWritten != sizeof(WCHAR))
+		{
+			CloseHandle(phcctx->hFileOut);
+			phcctx->hFileOut = INVALID_HANDLE_VALUE;
+			DeleteFile(pszSaveFile);
+			return(FALSE);
+		}
+	}
+
+	return(TRUE);
+}
+
 PCTSTR WINAPI HashCalcLineEnding( PHASHCALCCONTEXT phcctx )
 {
 	return(phcctx->opt.dwSaveEol == 1 ? TEXT("\n") : TEXT("\r\n"));

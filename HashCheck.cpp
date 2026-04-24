@@ -43,10 +43,10 @@ BOOL WINAPI InstallFile( LPCTSTR, LPTSTR, LPTSTR, BOOL * );
 BOOL WINAPI GetProgramFilesDirectory( LPTSTR, UINT );
 VOID WINAPI UnregisterSparsePackage( );
 VOID WINAPI ShowRebootRequiredMessage( BOOL );
-#ifdef _WIN64
-BOOL WINAPI Uninstall32BitDll( LPCTSTR );
 BOOL WINAPI DeleteFileOrSchedule( LPCTSTR, BOOL * );
 BOOL WINAPI DeleteInstalledFile( LPTSTR, PTSTR, SIZE_T, LPCTSTR, BOOL * );
+#ifdef _WIN64
+BOOL WINAPI Uninstall32BitDll( LPCTSTR );
 BOOL WINAPI DeleteInstalledFilePattern( LPTSTR, PTSTR, SIZE_T, LPCTSTR, BOOL * );
 BOOL WINAPI DeleteDirectoryTree( LPTSTR, SIZE_T, BOOL * );
 #endif
@@ -505,8 +505,7 @@ HRESULT Uninstall( BOOL bShowRebootPrompt )
 	else
 		hr = E_FAIL;
 
-#ifdef _WIN64
-	// Remove files installed beside the x64 shell extension.
+	// Remove files installed beside the shell extension.
 	{
 		TCHAR szInstallPath[MAX_PATH << 1];
 		StringCbCopy(szInstallPath, sizeof(szInstallPath), szCurrentDllPath);
@@ -517,6 +516,10 @@ HRESULT Uninstall( BOOL bShowRebootPrompt )
 			++pszFileName;
 			SIZE_T cchFileName = countof(szInstallPath) - (pszFileName - szInstallPath);
 
+			if (!DeleteInstalledFile(szInstallPath, pszFileName, cchFileName, TEXT("HashCheckPackageHost.exe"), &bRebootRequired))
+				hr = E_FAIL;
+
+#ifdef _WIN64
 			if (!DeleteInstalledFile(szInstallPath, pszFileName, cchFileName, TEXT("tbb12.dll"), &bRebootRequired))
 				hr = E_FAIL;
 
@@ -526,18 +529,15 @@ HRESULT Uninstall( BOOL bShowRebootPrompt )
 			if (!DeleteInstalledFile(szInstallPath, pszFileName, cchFileName, PACKAGE_FILE_STR_HashCheck, &bRebootRequired))
 				hr = E_FAIL;
 
-			if (!DeleteInstalledFile(szInstallPath, pszFileName, cchFileName, TEXT("HashCheckPackageHost.exe"), &bRebootRequired))
-				hr = E_FAIL;
-
 			if (!DeleteInstalledFilePattern(szInstallPath, pszFileName, cchFileName, TEXT("resources*.pri"), &bRebootRequired))
 				hr = E_FAIL;
 
 			if (FAILED(StringCchCopy(pszFileName, cchFileName, TEXT("Assets"))) ||
 			    !DeleteDirectoryTree(szInstallPath, countof(szInstallPath), &bRebootRequired))
 				hr = E_FAIL;
+#endif
 		}
 	}
-#endif
 
 	// Disassociate file extensions; see the comment in DllUnregisterServer for
 	// why this step is skipped for Wow64 processes
@@ -626,7 +626,6 @@ VOID WINAPI UnregisterSparsePackage( )
 	}
 }
 
-#ifdef _WIN64
 BOOL WINAPI DeleteFileOrSchedule( LPCTSTR lpszPath, BOOL *pbRebootRequired )
 {
 	if (DeleteFile(lpszPath))
@@ -655,6 +654,7 @@ BOOL WINAPI DeleteInstalledFile( LPTSTR lpszPath, PTSTR lpszFileName, SIZE_T cch
 	return(DeleteFileOrSchedule(lpszPath, pbRebootRequired));
 }
 
+#ifdef _WIN64
 BOOL WINAPI DeleteInstalledFilePattern( LPTSTR lpszPath, PTSTR lpszFileName, SIZE_T cchFileName, LPCTSTR lpszPattern, BOOL *pbRebootRequired )
 {
 	if (FAILED(StringCchCopy(lpszFileName, cchFileName, lpszPattern)))
