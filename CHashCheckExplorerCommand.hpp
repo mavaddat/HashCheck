@@ -17,12 +17,15 @@ enum HASHCHECK_EXPLORER_COMMAND {
 	HCEC_OPTIONS = 2
 };
 
-class CHashCheckExplorerCommand : public IExplorerCommand, public IObjectWithSite
+class CHashCheckExplorerCommand : public IExplorerCommand, public IObjectWithSite, public IObjectWithSelection
 {
 	protected:
 		CREF m_cRef;
 		HASHCHECK_EXPLORER_COMMAND m_command;
 		IUnknown *m_pSite;
+		IShellItemArray *m_pSelection;
+		// Empirical Windows 11 signal: the classic menu calls SetSelection.
+		BOOL m_bClassicMenu;
 
 	public:
 		CHashCheckExplorerCommand( HASHCHECK_EXPLORER_COMMAND );
@@ -51,6 +54,10 @@ class CHashCheckExplorerCommand : public IExplorerCommand, public IObjectWithSit
 		// IObjectWithSite members
 		STDMETHODIMP SetSite( IUnknown * );
 		STDMETHODIMP GetSite( REFIID, void ** );
+
+		// IObjectWithSelection members
+		STDMETHODIMP SetSelection( IShellItemArray * );
+		STDMETHODIMP GetSelection( REFIID, void ** );
 };
 
 typedef CHashCheckExplorerCommand *LPCHASHCHECKEXPLORERCOMMAND;

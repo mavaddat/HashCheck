@@ -440,12 +440,17 @@ CHashCheckExplorerCommand::CHashCheckExplorerCommand( HASHCHECK_EXPLORER_COMMAND
 	m_cRef = 1;
 	m_command = command;
 	m_pSite = NULL;
+	m_pSelection = NULL;
+	m_bClassicMenu = FALSE;
 }
 
 CHashCheckExplorerCommand::~CHashCheckExplorerCommand( )
 {
 	if (m_pSite)
 		m_pSite->Release();
+
+	if (m_pSelection)
+		m_pSelection->Release();
 
 	InterlockedDecrement(&g_cRefThisDll);
 }
@@ -463,6 +468,10 @@ STDMETHODIMP CHashCheckExplorerCommand::QueryInterface( REFIID riid, LPVOID *ppv
 	else if (IsEqualIID(riid, IID_IObjectWithSite))
 	{
 		*ppv = static_cast<IObjectWithSite *>(this);
+	}
+	else if (IsEqualIID(riid, IID_IObjectWithSelection))
+	{
+		*ppv = static_cast<IObjectWithSelection *>(this);
 	}
 	else
 	{
@@ -513,6 +522,9 @@ STDMETHODIMP CHashCheckExplorerCommand::GetState( IShellItemArray *psia, BOOL fO
 		return(E_POINTER);
 
 	*pCmdState = ECS_HIDDEN;
+
+	if (m_bClassicMenu)
+		return(S_OK);
 
 	if (!IsMenuVisibleByOptions())
 		return(S_OK);
@@ -587,6 +599,18 @@ STDMETHODIMP CHashCheckExplorerCommand::SetSite( IUnknown *pUnkSite )
 		m_pSite->Release();
 
 	m_pSite = pUnkSite;
+
+	if (!pUnkSite)
+	{
+		if (m_pSelection)
+		{
+			m_pSelection->Release();
+			m_pSelection = NULL;
+		}
+
+		m_bClassicMenu = FALSE;
+	}
+
 	return(S_OK);
 }
 
@@ -601,4 +625,32 @@ STDMETHODIMP CHashCheckExplorerCommand::GetSite( REFIID riid, void **ppvSite )
 		return(E_FAIL);
 
 	return(m_pSite->QueryInterface(riid, ppvSite));
+}
+
+STDMETHODIMP CHashCheckExplorerCommand::SetSelection( IShellItemArray *psia )
+{
+	if (psia)
+		psia->AddRef();
+
+	if (m_pSelection)
+		m_pSelection->Release();
+
+	m_pSelection = psia;
+
+	// The call itself is the classic-menu signal, even if psia is NULL.
+	m_bClassicMenu = TRUE;
+	return(S_OK);
+}
+
+STDMETHODIMP CHashCheckExplorerCommand::GetSelection( REFIID riid, void **ppv )
+{
+	if (!ppv)
+		return(E_POINTER);
+
+	*ppv = NULL;
+
+	if (!m_pSelection)
+		return(E_FAIL);
+
+	return(m_pSelection->QueryInterface(riid, ppv));
 }
