@@ -813,7 +813,10 @@ INT_PTR CALLBACK HashVerifyDlgProc( HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM 
 			{
 				case IDC_PAUSE:
 				{
-					WorkerThreadTogglePause((PCOMMONCONTEXT)phvctx);
+					if (WorkerThreadIsRunNowAvailable((PCOMMONCONTEXT)phvctx))
+						WorkerThreadRequestRunNow((PCOMMONCONTEXT)phvctx);
+					else
+						WorkerThreadTogglePause((PCOMMONCONTEXT)phvctx);
 					return(TRUE);
 				}
 
@@ -921,10 +924,12 @@ INT_PTR CALLBACK HashVerifyDlgProc( HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM 
 		case HM_WORKERTHREAD_QUEUESTATE:
 		{
 			phvctx = (PHASHVERIFYCONTEXT)wParam;
+			WorkerThreadSetRunNowAvailable((PCOMMONCONTEXT)phvctx, FALSE);
 			if ((BOOL)lParam)
 			{
-				SetControlText(hWnd, IDC_PAUSE, IDS_HV_QUEUED);
-				EnableWindow(GetDlgItem(hWnd, IDC_PAUSE), FALSE);
+				WorkerThreadSetRunNowAvailable((PCOMMONCONTEXT)phvctx, TRUE);
+				SetControlText(hWnd, IDC_PAUSE, IDS_HV_RUN_NOW);
+				EnableWindow(GetDlgItem(hWnd, IDC_PAUSE), TRUE);
 				SetProgressBarPause((PCOMMONCONTEXT)phvctx, PBST_PAUSED);
 			}
 			else if (!(phvctx->dwFlags & HCF_EXIT_PENDING) && phvctx->status != CANCEL_REQUESTED)

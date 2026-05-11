@@ -47,6 +47,10 @@ extern "C" {
 #define HCF_MARQUEE           0x0002UL
 #define HCF_RESTARTING        0x0004UL
 #define HCF_BYPASS_QUEUE      0x04000000UL
+// Run now uses two shared bits: AVAILABLE tracks the visible queued-button
+// mode, while REQUESTED is consumed by the waiting worker to bypass the queue.
+#define HCF_RUN_NOW_REQUESTED 0x08000000UL
+#define HCF_RUN_NOW_AVAILABLE 0x10000000UL
 #define HVF_HAS_SET_TYPE      0x0008UL
 #define HVF_ITEM_HILITE       0x0010UL
 #define HPF_HAS_RESIZED       0x0008UL
@@ -119,6 +123,9 @@ VOID WINAPI SetProgressBarPause( PCOMMONCONTEXT pcmnctx, WPARAM iState );
 
 // Functions used by the main thread to control the worker thread
 VOID WINAPI WorkerThreadTogglePause( PCOMMONCONTEXT pcmnctx );
+BOOL WINAPI WorkerThreadIsRunNowAvailable( PCOMMONCONTEXT pcmnctx );
+VOID WINAPI WorkerThreadSetRunNowAvailable( PCOMMONCONTEXT pcmnctx, BOOL bAvailable );
+BOOL WINAPI WorkerThreadRequestRunNow( PCOMMONCONTEXT pcmnctx );
 VOID WINAPI WorkerThreadStop( PCOMMONCONTEXT pcmnctx );
 VOID WINAPI WorkerThreadCleanup( PCOMMONCONTEXT pcmnctx );
 // Returns NULL if canceled, INVALID_HANDLE_VALUE if this worker should run

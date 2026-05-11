@@ -65,6 +65,41 @@ static LONG WINAPI WorkerThreadGetStatus( PCOMMONCONTEXT pcmnctx )
 	return(InterlockedCompareExchange(&pcmnctx->status, 0, 0));
 }
 
+static DWORD WINAPI WorkerThreadGetFlags( PCOMMONCONTEXT pcmnctx )
+{
+	return((DWORD)InterlockedCompareExchange((PVLONG)&pcmnctx->dwFlags, 0, 0));
+}
+
+static VOID WINAPI WorkerThreadSetFlags( PCOMMONCONTEXT pcmnctx, DWORD dwFlags )
+{
+	for (;;)
+	{
+		DWORD dwPrevFlags = WorkerThreadGetFlags(pcmnctx);
+		DWORD dwNextFlags = dwPrevFlags | dwFlags;
+
+		if (dwPrevFlags == dwNextFlags ||
+		    InterlockedCompareExchange((PVLONG)&pcmnctx->dwFlags, (LONG)dwNextFlags, (LONG)dwPrevFlags) == (LONG)dwPrevFlags)
+		{
+			return;
+		}
+	}
+}
+
+static VOID WINAPI WorkerThreadClearFlags( PCOMMONCONTEXT pcmnctx, DWORD dwFlags )
+{
+	for (;;)
+	{
+		DWORD dwPrevFlags = WorkerThreadGetFlags(pcmnctx);
+		DWORD dwNextFlags = dwPrevFlags & ~dwFlags;
+
+		if (dwPrevFlags == dwNextFlags ||
+		    InterlockedCompareExchange((PVLONG)&pcmnctx->dwFlags, (LONG)dwNextFlags, (LONG)dwPrevFlags) == (LONG)dwPrevFlags)
+		{
+			return;
+		}
+	}
+}
+
 static BOOL WINAPI WorkerThreadSetStatusIf( PCOMMONCONTEXT pcmnctx, LONG lStatus, LONG lExpectedStatus )
 {
 	return(InterlockedCompareExchange(&pcmnctx->status, lStatus, lExpectedStatus) == lExpectedStatus);
@@ -490,6 +525,47 @@ static VOID WINAPI JobQueueSignalWaiters( VOID )
 	}
 }
 
+BOOL WINAPI WorkerThreadRequestRunNow( PCOMMONCONTEXT pcmnctx )
+{
+	if (!pcmnctx ||
+	    WorkerThreadGetStatus(pcmnctx) != QUEUED ||
+	    !WorkerThreadIsRunNowAvailable(pcmnctx))
+	{
+		return(FALSE);
+	}
+
+	WorkerThreadSetFlags(pcmnctx, HCF_RUN_NOW_REQUESTED);
+	WorkerThreadClearFlags(pcmnctx, HCF_RUN_NOW_AVAILABLE);
+
+	if (WorkerThreadGetStatus(pcmnctx) != QUEUED)
+	{
+		WorkerThreadClearFlags(pcmnctx, HCF_RUN_NOW_REQUESTED);
+		return(FALSE);
+	}
+
+	if (pcmnctx->hWnd && !(WorkerThreadGetFlags(pcmnctx) & HCF_EXIT_PENDING))
+		EnableWindow(GetDlgItem(pcmnctx->hWnd, IDC_PAUSE), FALSE);
+
+	JobQueueSignalWaiters();
+	return(TRUE);
+}
+
+BOOL WINAPI WorkerThreadIsRunNowAvailable( PCOMMONCONTEXT pcmnctx )
+{
+	return(pcmnctx && (WorkerThreadGetFlags(pcmnctx) & HCF_RUN_NOW_AVAILABLE));
+}
+
+VOID WINAPI WorkerThreadSetRunNowAvailable( PCOMMONCONTEXT pcmnctx, BOOL bAvailable )
+{
+	if (!pcmnctx)
+		return;
+
+	if (bAvailable)
+		WorkerThreadSetFlags(pcmnctx, HCF_RUN_NOW_AVAILABLE);
+	else
+		WorkerThreadClearFlags(pcmnctx, HCF_RUN_NOW_AVAILABLE);
+}
+
 static DWORD WINAPI WorkerThreadWaitForQueueEvent( PCOMMONCONTEXT pcmnctx, HANDLE hQueueEvent )
 {
 	// This event is an advisory wakeup, not the source of queue correctness.
@@ -749,6 +825,7 @@ HANDLE WINAPI WorkerThreadAcquireJobSlot( PCOMMONCONTEXT pcmnctx )
 		BOOL bAtFront = FALSE;
 		BOOL bQueueChanged = FALSE;
 		BOOL bQueueFull = FALSE;
+		BOOL bRunNow = FALSE;
 
 		if (WorkerThreadIsCancelRequested(pcmnctx))
 		{
@@ -798,6 +875,14 @@ HANDLE WINAPI WorkerThreadAcquireJobSlot( PCOMMONCONTEXT pcmnctx )
 		}
 
 		bAtFront = JobQueueIsFront(pSlot->pState, pSlot);
+		if (!bAtFront &&
+		    pSlot->bEnqueued &&
+		    (WorkerThreadGetFlags(pcmnctx) & HCF_RUN_NOW_REQUESTED))
+		{
+			bRunNow = JobQueueRemoveSlot(pSlot->pState, pSlot);
+			if (bRunNow)
+				bQueueChanged = TRUE;
+		}
 		ReleaseMutex(pSlot->hQueueMutex);
 
 		if (bQueueChanged)
@@ -821,6 +906,22 @@ HANDLE WINAPI WorkerThreadAcquireJobSlot( PCOMMONCONTEXT pcmnctx )
 			continue;
 		}
 
+		if (bRunNow)
+		{
+			WorkerThreadClearFlags(pcmnctx, HCF_RUN_NOW_REQUESTED | HCF_RUN_NOW_AVAILABLE);
+			if (!WorkerThreadSetStatusUnlessCanceled(pcmnctx, ACTIVE))
+			{
+				JobQueueCloseSlot(pSlot);
+				return(NULL);
+			}
+
+			if (bQueued && pcmnctx->hWnd)
+				PostMessage(pcmnctx->hWnd, HM_WORKERTHREAD_QUEUESTATE, (WPARAM)pcmnctx, FALSE);
+
+			JobQueueCloseSlot(pSlot);
+			return(INVALID_HANDLE_VALUE);
+		}
+
 		if (bAtFront)
 		{
 			if (!WorkerThreadSetStatusUnlessCanceled(pcmnctx, ACTIVE))
@@ -828,6 +929,13 @@ HANDLE WINAPI WorkerThreadAcquireJobSlot( PCOMMONCONTEXT pcmnctx )
 				WorkerThreadReleaseJobSlot((HANDLE)pSlot);
 				return(NULL);
 			}
+
+			// Keep HCF_RUN_NOW_AVAILABLE aligned with the visible Run now button
+			// until the queued-state message changes it back to Pause.
+			WorkerThreadClearFlags(
+				pcmnctx,
+				HCF_RUN_NOW_REQUESTED | (bQueued && pcmnctx->hWnd ? 0 : HCF_RUN_NOW_AVAILABLE)
+			);
 
 			if (bQueued)
 			{
@@ -893,6 +1001,8 @@ VOID WINAPI WorkerThreadStop( PCOMMONCONTEXT pcmnctx )
 		if (WorkerThreadSetStatusIf(pcmnctx, CANCEL_REQUESTED, lPrevStatus))
 			break;
 	}
+
+	WorkerThreadClearFlags(pcmnctx, HCF_RUN_NOW_REQUESTED | HCF_RUN_NOW_AVAILABLE);
 
 	// If the thread is paused, unpause it
     if (lPrevStatus == PAUSED && pcmnctx->hUnpauseEvent)

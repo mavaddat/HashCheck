@@ -297,7 +297,10 @@ INT_PTR CALLBACK HashPropDlgProc( HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lP
 
 				case IDC_PAUSE:
 				{
-					WorkerThreadTogglePause((PCOMMONCONTEXT)phpctx);
+					if (WorkerThreadIsRunNowAvailable((PCOMMONCONTEXT)phpctx))
+						WorkerThreadRequestRunNow((PCOMMONCONTEXT)phpctx);
+					else
+						WorkerThreadTogglePause((PCOMMONCONTEXT)phpctx);
 					return(TRUE);
 				}
 
@@ -387,10 +390,12 @@ INT_PTR CALLBACK HashPropDlgProc( HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lP
 		case HM_WORKERTHREAD_QUEUESTATE:
 		{
 			phpctx = (PHASHPROPCONTEXT)wParam;
+			WorkerThreadSetRunNowAvailable((PCOMMONCONTEXT)phpctx, FALSE);
 			if ((BOOL)lParam)
 			{
-				SetControlText(hWnd, IDC_PAUSE, IDS_HP_QUEUED);
-				EnableWindow(GetDlgItem(hWnd, IDC_PAUSE), FALSE);
+				WorkerThreadSetRunNowAvailable((PCOMMONCONTEXT)phpctx, TRUE);
+				SetControlText(hWnd, IDC_PAUSE, IDS_HP_RUN_NOW);
+				EnableWindow(GetDlgItem(hWnd, IDC_PAUSE), TRUE);
 				SetProgressBarPause((PCOMMONCONTEXT)phpctx, PBST_PAUSED);
 			}
 			else if (!(phpctx->dwFlags & HCF_EXIT_PENDING) && phpctx->status != CANCEL_REQUESTED)
