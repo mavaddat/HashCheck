@@ -103,11 +103,15 @@ typedef struct {
 } FILESIZE, *PFILESIZE;
 
 // Convenience wrappers
+typedef BOOL (WINAPI *PFNFILEOPENSHOULDABORT)( PVOID pvContext );
 HANDLE __fastcall CreateFileWithLongPathRetry( PCTSTR pszPath, DWORD dwDesiredAccess,
                                                DWORD dwShareMode, LPSECURITY_ATTRIBUTES lpSecurityAttributes,
                                                DWORD dwCreationDisposition, DWORD dwFlagsAndAttributes,
                                                HANDLE hTemplateFile );
 HANDLE __fastcall OpenFileForReading( PCTSTR pszPath );
+HANDLE __fastcall OpenFileForReadingAbortable( PCTSTR pszPath,
+                                               PFNFILEOPENSHOULDABORT pfnShouldAbort,
+                                               PVOID pvAbortContext );
 DWORD WINAPI GetReadBufferSizeForPath( PCTSTR pszPath );
 BOOL WINAPI ShouldUseBLAKE3Tbb( const WHCTXEX* pwhctx, ULONGLONG cbFileSize,
                                 DWORD dwReadBufferSize, BOOL bOuterMultithreaded );

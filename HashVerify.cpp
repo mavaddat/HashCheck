@@ -35,6 +35,11 @@
 #define HV_STATUS_MISMATCH   2
 #define HV_STATUS_UNREADABLE 3
 
+#define HV_PREFLIGHT_BUDGET_MS 500
+#define HV_PREFLIGHT_PROBE_RUNNING   0
+#define HV_PREFLIGHT_PROBE_DONE      1
+#define HV_PREFLIGHT_PROBE_ABANDONED 2
+
 #define LISTVIEW_EXSTYLES ( LVS_EX_HEADERDRAGDROP | \
                             LVS_EX_FULLROWSELECT  | \
                             LVS_EX_LABELTIP       | \
@@ -115,6 +120,13 @@ typedef struct {
 	TCHAR              szStatus[4][MAX_STRINGRES];
 } HASHVERIFYCONTEXT, *PHASHVERIFYCONTEXT;
 
+typedef struct {
+	PTSTR              pszPath;
+	HMODULE            hModule;
+	BOOL               bReadable;
+	volatile LONG      lState;
+} HASHVERIFYPREFLIGHTPROBE, *PHASHVERIFYPREFLIGHTPROBE;
+
 
 
 /*============================================================================*\
@@ -130,6 +142,10 @@ BOOL WINAPI ValidateHexSequence( PTSTR psz, UINT cch );
 VOID CALLBACK HashVerifyRunDLLEx( HWND hWnd, HINSTANCE hInstance,
                                   PWSTR pszCmdLine, INT nCmdShow, BOOL bBypassQueue );
 DWORD WINAPI HashVerifyThreadEx( PTSTR pszPath, BOOL bBypassQueue );
+static UINT __stdcall HashVerifyPreflightProbeThread( PVOID pvParam );
+static BOOL WINAPI HashVerifyPreflightProbeFile( PCTSTR pszPath, DWORD dwTimeout,
+                                                 HANDLE hCancelEvent,
+                                                 PBOOL pbReadable, PBOOL pbCanceled );
 VOID __fastcall HashVerifyWorkerMain( PHASHVERIFYCONTEXT phvctx );
 
 // Dialog general
@@ -555,6 +571,144 @@ BOOL WINAPI ValidateHexSequence( PTSTR psz, UINT cch )
 	Worker thread
 \*============================================================================*/
 
+static VOID WINAPI HashVerifyFreePreflightProbe( PHASHVERIFYPREFLIGHTPROBE pProbe )
+{
+	if (pProbe)
+	{
+		free(pProbe->pszPath);
+		free(pProbe);
+	}
+}
+
+static BOOL WINAPI HashVerifyShouldAbortPreflightProbeOpen( PVOID pvParam )
+{
+	PHASHVERIFYPREFLIGHTPROBE pProbe = (PHASHVERIFYPREFLIGHTPROBE)pvParam;
+	return(InterlockedCompareExchange(&pProbe->lState, HV_PREFLIGHT_PROBE_RUNNING,
+	                                  HV_PREFLIGHT_PROBE_RUNNING) != HV_PREFLIGHT_PROBE_RUNNING);
+}
+
+static UINT __stdcall HashVerifyPreflightProbeThread( PVOID pvParam )
+{
+	PHASHVERIFYPREFLIGHTPROBE pProbe = (PHASHVERIFYPREFLIGHTPROBE)pvParam;
+	LARGE_INTEGER cbProbeFileSize;
+	HANDLE hFile;
+	HMODULE hModule;
+
+	hFile = OpenFileForReadingAbortable(pProbe->pszPath,
+	                                    HashVerifyShouldAbortPreflightProbeOpen,
+	                                    pProbe);
+	if (hFile != INVALID_HANDLE_VALUE)
+	{
+		pProbe->bReadable = GetFileSizeEx(hFile, &cbProbeFileSize);
+		CloseHandle(hFile);
+	}
+
+	if (InterlockedCompareExchange(&pProbe->lState, HV_PREFLIGHT_PROBE_DONE,
+	                               HV_PREFLIGHT_PROBE_RUNNING) == HV_PREFLIGHT_PROBE_ABANDONED)
+	{
+		// The abandoned probe owns the loader reference until it exits.
+		hModule = pProbe->hModule;
+		HashVerifyFreePreflightProbe(pProbe);
+		InterlockedDecrement(&g_cRefThisDll);
+		FreeLibraryAndExitThread(hModule, 0);
+	}
+
+	InterlockedDecrement(&g_cRefThisDll);
+	return(0);
+}
+
+static BOOL WINAPI HashVerifyPreflightProbeFile( PCTSTR pszPath, DWORD dwTimeout,
+                                                 HANDLE hCancelEvent,
+                                                 PBOOL pbReadable, PBOOL pbCanceled )
+{
+	PHASHVERIFYPREFLIGHTPROBE pProbe;
+	HANDLE hThread;
+	DWORD dwWait;
+	SIZE_T cchPath;
+	BOOL bCancelWait;
+
+	*pbReadable = FALSE;
+	*pbCanceled = FALSE;
+
+	if (dwTimeout == 0)
+		return(FALSE);
+
+	cchPath = SSLen(pszPath) + 1;
+	pProbe = (PHASHVERIFYPREFLIGHTPROBE)malloc(sizeof(HASHVERIFYPREFLIGHTPROBE));
+	if (!pProbe)
+		return(FALSE);
+
+	ZeroMemory(pProbe, sizeof(HASHVERIFYPREFLIGHTPROBE));
+	pProbe->pszPath = (PTSTR)malloc(cchPath * sizeof(TCHAR));
+	if (!pProbe->pszPath)
+	{
+		free(pProbe);
+		return(FALSE);
+	}
+	SSCpy(pProbe->pszPath, pszPath);
+
+	// g_cRefThisDll protects COM unload checks; this protects direct FreeLibrary callers.
+	if (!GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+	                       (LPCTSTR)HashVerifyPreflightProbeThread,
+	                       &pProbe->hModule))
+	{
+		HashVerifyFreePreflightProbe(pProbe);
+		return(FALSE);
+	}
+
+	InterlockedIncrement(&g_cRefThisDll);
+	hThread = (HANDLE)_beginthreadex(NULL, BASE_STACK_SIZE, HashVerifyPreflightProbeThread,
+	                                 pProbe, 0, NULL);
+	if (!hThread)
+	{
+		InterlockedDecrement(&g_cRefThisDll);
+		FreeLibrary(pProbe->hModule);
+		HashVerifyFreePreflightProbe(pProbe);
+		return(FALSE);
+	}
+
+	if (hCancelEvent)
+	{
+		HANDLE rgHandles[2] = { hThread, hCancelEvent };
+		dwWait = WaitForMultipleObjects(countof(rgHandles), rgHandles, FALSE, dwTimeout);
+	}
+	else
+	{
+		dwWait = WaitForSingleObject(hThread, dwTimeout);
+	}
+
+	if (dwWait == WAIT_OBJECT_0)
+	{
+		HMODULE hModule = pProbe->hModule;
+		*pbReadable = pProbe->bReadable;
+		CloseHandle(hThread);
+		HashVerifyFreePreflightProbe(pProbe);
+		FreeLibrary(hModule);
+		return(TRUE);
+	}
+
+	bCancelWait = hCancelEvent && dwWait == WAIT_OBJECT_0 + 1;
+	if (bCancelWait)
+		*pbCanceled = TRUE;
+
+	if (InterlockedCompareExchange(&pProbe->lState, HV_PREFLIGHT_PROBE_ABANDONED,
+	                               HV_PREFLIGHT_PROBE_RUNNING) == HV_PREFLIGHT_PROBE_DONE)
+	{
+		HMODULE hModule = pProbe->hModule;
+		WaitForSingleObject(hThread, INFINITE);
+		if (!bCancelWait)
+			*pbReadable = pProbe->bReadable;
+		CloseHandle(hThread);
+		HashVerifyFreePreflightProbe(pProbe);
+		FreeLibrary(hModule);
+		return(!bCancelWait);
+	}
+
+	CancelSynchronousIo(hThread);
+	CloseHandle(hThread);
+	return(FALSE);
+}
+
 VOID __fastcall HashVerifyWorkerMain( PHASHVERIFYCONTEXT phvctx )
 {
 	// Note that ALL message communication to and from the main window MUST
@@ -581,23 +735,28 @@ VOID __fastcall HashVerifyWorkerMain( PHASHVERIFYCONTEXT phvctx )
 
 #ifdef USE_PPL
     const bool bMultithreaded = phvctx->cTotal > 1 && phvctx->dwReadBufferSize == READ_BUFFER_SIZE_SSD;
-
-    concurrency::concurrent_vector<void*> vecBuffers;  // a vector of all allocated read buffers (one per thread)
-    DWORD dwBufferTlsIndex = TlsAlloc();               // TLS index of the current thread's read buffer
-    if (dwBufferTlsIndex == TLS_OUT_OF_INDEXES)
-        return;
 #else
     constexpr bool bMultithreaded = false;
 #endif
     phvctx->bOuterMultithreaded = bMultithreaded ? TRUE : FALSE;
 
-    PBYTE pbTheBuffer;  // filename/read buffer, used iff not multithreaded
-    if (! bMultithreaded)
+    PBYTE pbTheBuffer = (PBYTE)malloc(phvctx->dwReadBufferSize);  // filename/read buffer
+    if (pbTheBuffer == NULL)
+        return;
+
+#ifdef USE_PPL
+    concurrency::concurrent_vector<void*> vecBuffers;  // a vector of all allocated read buffers (one per thread)
+    DWORD dwBufferTlsIndex = TLS_OUT_OF_INDEXES;       // TLS index of the current thread's read buffer
+    if (bMultithreaded)
     {
-        pbTheBuffer = (PBYTE)malloc(phvctx->dwReadBufferSize);
-        if (pbTheBuffer == NULL)
+        dwBufferTlsIndex = TlsAlloc();
+        if (dwBufferTlsIndex == TLS_OUT_OF_INDEXES)
+        {
+            free(pbTheBuffer);
             return;
+        }
     }
+#endif
 
     // Initialize the progress bar update synchronization vars
     CRITICAL_SECTION updateCritSec;
@@ -611,9 +770,100 @@ VOID __fastcall HashVerifyWorkerMain( PHASHVERIFYCONTEXT phvctx )
 
     class CanceledException {};
 
+    auto check_pause_cancel = [&]()
+    {
+        if (phvctx->status == PAUSED)
+            WaitForSingleObject(phvctx->hUnpauseEvent, INFINITE);
+        if (phvctx->status == CANCEL_REQUESTED)
+            throw CanceledException();
+    };
+
+    auto throttle_updates = [&](DWORD dwMaxWait)
+    {
+        DWORD dwThrottleStarted = GetTickCount();
+
+        while (phvctx->cSentMsgs > phvctx->cHandledMsgs + MSG_THROTTLE_THRESHOLD)
+        {
+            DWORD dwWaited = GetTickCount() - dwThrottleStarted;
+            if (dwWaited >= dwMaxWait)
+                break;
+
+            Sleep(std::min<DWORD>(50, dwMaxWait - dwWaited));
+            check_pause_cancel();
+        }
+    };
+
+    auto post_item_update = [&](PHASHVERIFYITEM pItem)
+    {
+        InterlockedIncrement(reinterpret_cast<volatile LONG*>(&phvctx->cSentMsgs));
+        PostMessage(phvctx->hWnd, HM_WORKERTHREAD_UPDATE, (WPARAM)phvctx, (LPARAM)pItem);
+    };
+
+    auto build_item_path = [&](PHASHVERIFYITEM pItem, PTSTR pszPath)
+    {
+        SIZE_T cchPrefix = cchPathPrefix;
+
+        // Do not use the prefix if pszDisplayName is an absolute path
+        if ( pItem->pszDisplayName[0] == TEXT('\\') ||
+             pItem->pszDisplayName[1] == TEXT(':') )
+        {
+            cchPrefix = 0;
+        }
+
+        SSChainNCpy2(
+            pszPath,
+            phvctx->pszPath, cchPrefix,
+            pItem->pszDisplayName, pItem->cchDisplayName
+        );
+    };
+
+    auto preflight_unreadable_files = [&]()
+    {
+        DWORD dwPreflightStarted = GetTickCount();
+
+        for (PPHVITEM ppItem = phvctx->index; ppItem < phvctx->index + phvctx->cTotal; ++ppItem)
+        {
+            PHASHVERIFYITEM pItem = *ppItem;
+            BOOL bReadable, bCanceled;
+            DWORD dwElapsed;
+
+            check_pause_cancel();
+
+            // Keep preflight from becoming an unbounded startup delay.
+            dwElapsed = GetTickCount() - dwPreflightStarted;
+            if (dwElapsed >= HV_PREFLIGHT_BUDGET_MS)
+                break;
+
+            throttle_updates(HV_PREFLIGHT_BUDGET_MS - dwElapsed);
+
+            dwElapsed = GetTickCount() - dwPreflightStarted;
+            if (dwElapsed >= HV_PREFLIGHT_BUDGET_MS)
+                break;
+
+            build_item_path(pItem, (PTSTR)pbTheBuffer);
+
+            if (!HashVerifyPreflightProbeFile((PTSTR)pbTheBuffer, HV_PREFLIGHT_BUDGET_MS - dwElapsed,
+                                              phvctx->hCancelEvent, &bReadable, &bCanceled))
+            {
+                if (bCanceled)
+                    throw CanceledException();
+                break;
+            }
+
+            if (bReadable)
+                continue;
+
+            pItem->uStatusID = HV_STATUS_UNREADABLE;
+            post_item_update(pItem);
+        }
+    };
+
     // concurrency::parallel_for_each(phvctx->index, phvctx->index + phvctx->cTotal, ...
     auto per_file_worker = [&](PHASHVERIFYITEM pItem)
 	{
+        if (pItem->uStatusID != HV_STATUS_NULL)
+            return;
+
         PBYTE pbBuffer;
 #ifdef USE_PPL
         if (bMultithreaded)
@@ -635,22 +885,7 @@ VOID __fastcall HashVerifyWorkerMain( PHASHVERIFYCONTEXT phvctx )
             pbBuffer = pbTheBuffer;
 
 		// Part 1: Build the path
-		{
-			SIZE_T cchPrefix = cchPathPrefix;
-
-			// Do not use the prefix if pszDisplayName is an absolute path
-			if ( pItem->pszDisplayName[0] == TEXT('\\') ||
-			     pItem->pszDisplayName[1] == TEXT(':') )
-			{
-				cchPrefix = 0;
-			}
-
-			SSChainNCpy2(
-                (PTSTR)pbBuffer,
-				phvctx->pszPath, cchPrefix,
-				pItem->pszDisplayName, pItem->cchDisplayName
-			);
-		}
+        build_item_path(pItem, (PTSTR)pbBuffer);
 
 		// Part 2: Calculate the checksum(s)
         WHCTXEX whctx;
@@ -671,10 +906,7 @@ VOID __fastcall HashVerifyWorkerMain( PHASHVERIFYCONTEXT phvctx )
 #endif
         );
 
-        if (phvctx->status == PAUSED)
-            WaitForSingleObject(phvctx->hUnpauseEvent, INFINITE);
-		if (phvctx->status == CANCEL_REQUESTED)
-            throw CanceledException();
+        check_pause_cancel();
 
 		// Part 3: Do something with the results
 		if (whres.dwFlags)
@@ -719,15 +951,21 @@ VOID __fastcall HashVerifyWorkerMain( PHASHVERIFYCONTEXT phvctx )
 		}
 
 		// Part 4: Update the UI
-		++phvctx->cSentMsgs;
-		PostMessage(phvctx->hWnd, HM_WORKERTHREAD_UPDATE, (WPARAM)phvctx, (LPARAM)pItem);
+		post_item_update(pItem);
     };
 
     try
     {
+        // Surface readily found missing/unopenable files before expensive hashing starts.
+        preflight_unreadable_files();
+
 #ifdef USE_PPL
         if (bMultithreaded)
+        {
+            free(pbTheBuffer);
+            pbTheBuffer = NULL;
             concurrency::parallel_for_each(phvctx->index, phvctx->index + phvctx->cTotal, per_file_worker);
+        }
         else
 #endif
             std::for_each(phvctx->index, phvctx->index + phvctx->cTotal, per_file_worker);
@@ -739,11 +977,12 @@ VOID __fastcall HashVerifyWorkerMain( PHASHVERIFYCONTEXT phvctx )
     {
         for (void* pBuffer : vecBuffers)
             free(pBuffer);
+        if (dwBufferTlsIndex != TLS_OUT_OF_INDEXES)
+            TlsFree(dwBufferTlsIndex);
         DeleteCriticalSection(&updateCritSec);
     }
-    else
 #endif
-        free(pbTheBuffer);
+    free(pbTheBuffer);
 
 	// Play a sound to signal the normal, successful termination of operations,
 	// but exempt operations that were nearly instantaneous

@@ -208,12 +208,28 @@ HANDLE __fastcall CreateThreadCRT( PVOID pThreadProc, PVOID pvParam )
 	));
 }
 
-HANDLE __fastcall CreateFileWithLongPathRetry( PCTSTR pszPath, DWORD dwDesiredAccess,
-                                               DWORD dwShareMode, LPSECURITY_ATTRIBUTES lpSecurityAttributes,
-                                               DWORD dwCreationDisposition, DWORD dwFlagsAndAttributes,
-                                               HANDLE hTemplateFile )
+static BOOL WINAPI FileOpenShouldAbort( PFNFILEOPENSHOULDABORT pfnShouldAbort,
+                                        PVOID pvAbortContext )
 {
-	HANDLE hFile = CreateFile(
+	return(pfnShouldAbort && pfnShouldAbort(pvAbortContext));
+}
+
+static HANDLE __fastcall CreateFileWithLongPathRetryAbortable( PCTSTR pszPath, DWORD dwDesiredAccess,
+                                                               DWORD dwShareMode, LPSECURITY_ATTRIBUTES lpSecurityAttributes,
+                                                               DWORD dwCreationDisposition, DWORD dwFlagsAndAttributes,
+                                                               HANDLE hTemplateFile,
+                                                               PFNFILEOPENSHOULDABORT pfnShouldAbort,
+                                                               PVOID pvAbortContext )
+{
+	HANDLE hFile;
+
+	if (FileOpenShouldAbort(pfnShouldAbort, pvAbortContext))
+	{
+		SetLastError(ERROR_CANCELLED);
+		return(INVALID_HANDLE_VALUE);
+	}
+
+	hFile = CreateFile(
 		pszPath,
 		dwDesiredAccess,
 		dwShareMode,
@@ -226,19 +242,33 @@ HANDLE __fastcall CreateFileWithLongPathRetry( PCTSTR pszPath, DWORD dwDesiredAc
 	if (hFile == INVALID_HANDLE_VALUE)
 	{
 		DWORD dwLastError = GetLastError();
+
+		if (FileOpenShouldAbort(pfnShouldAbort, pvAbortContext))
+		{
+			SetLastError(ERROR_CANCELLED);
+			return(INVALID_HANDLE_VALUE);
+		}
+
 		PTSTR pszLongPath = AllocLongPath(pszPath);
 
 		if (pszLongPath)
 		{
-			hFile = CreateFile(
-				pszLongPath,
-				dwDesiredAccess,
-				dwShareMode,
-				lpSecurityAttributes,
-				dwCreationDisposition,
-				dwFlagsAndAttributes,
-				hTemplateFile
-			);
+			if (FileOpenShouldAbort(pfnShouldAbort, pvAbortContext))
+			{
+				SetLastError(ERROR_CANCELLED);
+			}
+			else
+			{
+				hFile = CreateFile(
+					pszLongPath,
+					dwDesiredAccess,
+					dwShareMode,
+					lpSecurityAttributes,
+					dwCreationDisposition,
+					dwFlagsAndAttributes,
+					hTemplateFile
+				);
+			}
 
 			free(pszLongPath);
 		}
@@ -251,16 +281,43 @@ HANDLE __fastcall CreateFileWithLongPathRetry( PCTSTR pszPath, DWORD dwDesiredAc
 	return(hFile);
 }
 
+HANDLE __fastcall CreateFileWithLongPathRetry( PCTSTR pszPath, DWORD dwDesiredAccess,
+                                               DWORD dwShareMode, LPSECURITY_ATTRIBUTES lpSecurityAttributes,
+                                               DWORD dwCreationDisposition, DWORD dwFlagsAndAttributes,
+                                               HANDLE hTemplateFile )
+{
+	return(CreateFileWithLongPathRetryAbortable(
+		pszPath,
+		dwDesiredAccess,
+		dwShareMode,
+		lpSecurityAttributes,
+		dwCreationDisposition,
+		dwFlagsAndAttributes,
+		hTemplateFile,
+		NULL,
+		NULL
+	));
+}
+
 HANDLE __fastcall OpenFileForReading( PCTSTR pszPath )
 {
-	return(CreateFileWithLongPathRetry(
+	return(OpenFileForReadingAbortable(pszPath, NULL, NULL));
+}
+
+HANDLE __fastcall OpenFileForReadingAbortable( PCTSTR pszPath,
+                                               PFNFILEOPENSHOULDABORT pfnShouldAbort,
+                                               PVOID pvAbortContext )
+{
+	return(CreateFileWithLongPathRetryAbortable(
 		pszPath,
 		GENERIC_READ,
 		FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
 		NULL,
 		OPEN_EXISTING,
 		FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN,
-		NULL
+		NULL,
+		pfnShouldAbort,
+		pvAbortContext
 	));
 }
 
